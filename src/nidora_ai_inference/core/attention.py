@@ -15,11 +15,15 @@ _BACKEND_NAMES = {"sdpa": "native", "sage": "sage", "flash": "flash"}
 
 
 def _sage_available() -> bool:
+    """diffusers' sage backend needs sageattention>=2.1.1 (source-built from
+    thu-ml/SageAttention; the PyPI 1.x package is too old)."""
     try:
-        import sageattention  # noqa: F401
+        from importlib.metadata import version
 
-        return True
-    except ImportError:
+        from packaging.version import Version
+
+        return Version(version("sageattention")) >= Version("2.1.1")
+    except Exception:
         return False
 
 
@@ -41,8 +45,19 @@ def apply_attention_backend(setting: str, modules: list, device: str) -> str:
         return "sdpa"
 
     backend_name = _BACKEND_NAMES[choice]
-    for module in modules:
-        if module is not None and hasattr(module, "set_attention_backend"):
-            module.set_attention_backend(backend_name)
+    try:
+        for module in modules:
+            if module is not None and hasattr(module, "set_attention_backend"):
+                module.set_attention_backend(backend_name)
+    except Exception as exc:
+        if setting == "auto":
+            # Acceleration is best-effort in auto mode — never fail a load for it.
+            log.warning("attention backend %s unusable (%s) — falling back to sdpa", choice, exc)
+            for module in modules:
+                if module is not None and hasattr(module, "set_attention_backend"):
+                    module.set_attention_backend("native")
+            log.info("attention backend: sdpa")
+            return "sdpa"
+        raise
     log.info("attention backend: %s", choice)
     return choice

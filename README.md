@@ -82,12 +82,21 @@ All env vars are optional (prefix `NIDORA_`, see `.env.sample`):
 
 ### SageAttention / Triton (optional acceleration)
 
-`NIDORA_ATTENTION=auto` uses SageAttention when installed and silently falls
-back to PyTorch SDPA otherwise. Explicit `sage`/`flash` fail loudly if missing.
+`NIDORA_ATTENTION=auto` uses SageAttention when a usable version is installed
+and falls back to PyTorch SDPA otherwise (also at runtime, if the backend
+errors). Explicit `sage`/`flash` fail loudly if missing.
 
-- **Linux**: `uv sync --extra accel` (installs `sageattention` + `triton`).
-- **Windows**: `uv pip install triton-windows sageattention` (Triton wheels
-  for Windows ship separately; check your CUDA/torch version compatibility).
+diffusers' sage backend requires **sageattention ≥ 2.1.1**, which is not on
+PyPI (the 1.x PyPI package is too old and won't be used). Install it from
+source on a machine with nvcc:
+
+```bash
+uv sync --extra accel   # triton
+pip install git+https://github.com/thu-ml/SageAttention.git
+```
+
+On Windows, install `triton-windows` first; community-built SageAttention
+wheels matching your torch/CUDA version can save the source build.
 
 ## Docker
 

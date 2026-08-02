@@ -10,8 +10,10 @@ port 8000.
 - **GPU**: 48 GB+ (A6000/L40S/A40) is the comfortable floor for Wan 2.2 A14B
   with `NIDORA_OFFLOAD=model`; 80 GB (A100/H100) runs with `OFFLOAD=none`;
   24 GB (4090) works but swaps experts constantly — expect slower runs.
-- **Disk**: ≥ 100 GB persistent volume. The Wan 2.2 A14B diffusers snapshot
-  is ~60–70 GB, the Lightx2v LoRAs ~1.4 GB, plus FLUX if you enable it.
+- **Disk**: ≥ 200 GB persistent volume. The Wan 2.2 A14B diffusers snapshot
+  is **126 GB** (the experts are stored in fp32: 57 GB each + 11 GB text
+  encoder), the Lightx2v LoRAs ~1.4 GB, plus download staging overhead —
+  plus FLUX (~35 GB) if you enable it.
 - **HF_TOKEN**: only needed for gated repos (FLUX.1-dev is gated; the Wan and
   Lightx2v repos are not).
 - Put weights on the **persistent/network volume**, never the container disk —
@@ -62,7 +64,7 @@ bash -c "sleep 2; bash /workspace/nidora-ai-inference/scripts/provision.sh"
 ## Vast.ai
 
 1. Create an instance from the **PyTorch (CUDA 12.x)** template. Pick an
-   offer with ≥ 100 GB disk. Under **Docker options**, add `-p 8000:8000`
+   offer with ≥ 200 GB disk. Under **Docker options**, add `-p 8000:8000`
    and env vars:
    ```
    -e NIDORA_REPO=https://github.com/nidora-software/nidora-ai-inference.git
