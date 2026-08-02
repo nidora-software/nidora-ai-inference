@@ -141,6 +141,10 @@ class Wan22I2VPipeline(Pipeline):
                         offload_device=torch.device("cpu"),
                         offload_type="leaf_level",
                         use_stream=True,
+                        # Pin per-group at transfer time, not all weights up
+                        # front — pinning both 14B experts (~56 GB) gets the
+                        # container OOM-killed on 64-96 GB hosts.
+                        low_cpu_mem_usage=True,
                     )
             for name, module in pipe.components.items():
                 if name not in ("transformer", "transformer_2") and isinstance(
