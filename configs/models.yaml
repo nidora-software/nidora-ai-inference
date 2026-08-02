@@ -1,0 +1,24 @@
+# Declarative model manifest.
+#
+# Each entry maps a name -> where the files come from.
+#   source:          a HuggingFace repo id ("org/repo") OR a local path.
+#   revision:        optional git revision pin for HF repos.
+#   allow_patterns:  optional glob filters for HF downloads (skip files you
+#                    don't need — the lightx2v repo is large).
+#
+# Names resolve to {NIDORA_MODELS_DIR}/{name} unless `source` is a local path.
+# Nothing downloads implicitly: place files manually, or run
+#   nidora-ai-inference download --all
+# (or set NIDORA_AUTO_DOWNLOAD=1 on cloud pods).
+
+models:
+  wan22-i2v-a14b:
+    source: "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
+
+  lightx2v-distill:
+    source: "lightx2v/Wan2.2-Distill-Loras"
+    allow_patterns:
+      - "*i2v*rank64*4step*.safetensors"
+
+  flux-dev:
+    source: "black-forest-labs/FLUX.1-dev"

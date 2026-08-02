@@ -1,0 +1,43 @@
+# Pipeline profiles — the flexibility layer.
+#
+# A profile binds a pipeline *kind* (Python class) to a model, optional LoRAs,
+# and default params. The API exposes profiles as pipeline ids; several
+# profiles can share one class (same code, different model/LoRAs/defaults).
+
+pipelines:
+  wan22-i2v:
+    kind: wan22_i2v
+    model: wan22-i2v-a14b
+    loras:
+      transformer: # high-noise expert
+        model: lightx2v-distill
+        weight_name: "wan2.2_i2v_A14b_high_noise_lora_rank64_lightx2v_4step_1022.safetensors"
+      transformer_2: # low-noise expert
+        model: lightx2v-distill
+        weight_name: "wan2.2_i2v_A14b_low_noise_lora_rank64_lightx2v_4step_1022.safetensors"
+    defaults:
+      num_inference_steps: 4
+      guidance_scale: 1.0
+      guidance_scale_2: 1.0
+      sample_shift: 5.0
+
+  # Same class, no distill LoRAs — full-quality slow path. Enable if needed.
+  # wan22-i2v-full:
+  #   kind: wan22_i2v
+  #   model: wan22-i2v-a14b
+  #   defaults:
+  #     num_inference_steps: 40
+  #     guidance_scale: 3.5
+  #     guidance_scale_2: 3.5
+  #     sample_shift: 5.0
+
+  flux-t2i:
+    kind: flux_t2i
+    model: flux-dev
+    defaults:
+      num_inference_steps: 20
+      guidance_scale: 3.5
+
+  mock:
+    kind: mock
+    defaults: {}
