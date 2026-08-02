@@ -54,7 +54,8 @@ uv run nidora-ai-inference download --all   # fetch everything the profiles need
 ```
 
 Cloud pods can set `NIDORA_AUTO_DOWNLOAD=1` to provision at startup, or use
-`scripts/provision.sh`.
+`scripts/provision.sh` — see [docs/deploy-pods.md](docs/deploy-pods.md) for
+step-by-step RunPod / Vast.ai recipes.
 
 ## Configuration
 
@@ -87,6 +88,28 @@ back to PyTorch SDPA otherwise. Explicit `sage`/`flash` fail loudly if missing.
 - **Linux**: `uv sync --extra accel` (installs `sageattention` + `triton`).
 - **Windows**: `uv pip install triton-windows sageattention` (Triton wheels
   for Windows ship separately; check your CUDA/torch version compatibility).
+
+## Docker
+
+The image contains code + dependencies only — weights come from the `/models`
+volume, artifacts land in `/outputs`, and the container's main process is
+`nidora-ai-inference serve`. Running it locally mirrors the rental-pod flow
+exactly:
+
+```bash
+docker compose up --build
+```
+
+This builds the image and mounts `./models` and `./outputs` from the repo, so
+the same weight folders you use for the bare `serve` command work unchanged.
+To imitate the cloud-pod provisioning path instead, uncomment
+`NIDORA_AUTO_DOWNLOAD: "1"` in `docker-compose.yml`.
+
+Requirements for GPU inference in Docker: an NVIDIA GPU + driver and the
+NVIDIA Container Toolkit (on Windows: Docker Desktop with the WSL2 backend —
+GPU passthrough is built in). On machines without an NVIDIA GPU (e.g. macOS),
+remove the `deploy:` block and set `NIDORA_DEVICE=cpu` — that's only useful
+for exercising the API with the mock pipeline.
 
 ## Development
 
