@@ -15,7 +15,7 @@ Self-hosted async inference API serving **Wan 2.2 I2V A14B** (MoE high/low-noise
 | Resource | Minimum | Notes |
 |---|---|---|
 | GPU | 24 GB (RTX 4090) | `NIDORA_OFFLOAD=model` — one Q6_K expert (~12 GB) on GPU at a time |
-| System RAM | 48 GB+ | the idle expert parks in RAM |
+| System RAM | **48 GB minimum, 64 GB recommended** | both experts + text encoder park in RAM (~40–50 GB peak at load). Vast enforces the offer's RAM allocation as a hard docker memory limit — less RAM = OOM kill (exit 137) during model load. Filter offers by CPU RAM ≥ 48 GB. |
 | Disk | **100 GB** | ~37 GB of weights + outputs headroom |
 | Ports | HTTP 8000 | Vast maps it to a random public port |
 
