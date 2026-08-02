@@ -104,13 +104,20 @@ and falls back to PyTorch SDPA otherwise (also at runtime, if the backend
 errors). Explicit `sage`/`flash` fail loudly if missing.
 
 diffusers' sage backend requires **sageattention ≥ 2.1.1**, which is not on
-PyPI (the 1.x PyPI package is too old and won't be used). Install it from
-source on a machine with nvcc:
+PyPI (the 1.x PyPI package is too old and won't be used), plus an sm80+ GPU
+(A100/3090 or newer).
 
-```bash
-uv sync --extra accel   # triton
-pip install git+https://github.com/thu-ml/SageAttention.git
-```
+- **Docker image**: SageAttention v2.2.0 is **prebuilt into the image** for
+  sm 8.0 / 8.6 / 8.9 / 9.0 / 12.0 (A100, 3090/A6000, 4090/L40S, H100,
+  RTX 5090) — nothing to do; `auto` uses it. Look for
+  `attention backend: sage` in the logs at model load.
+- **provision.sh pods**: set `NIDORA_BUILD_SAGE=1` to compile it at first
+  boot (needs nvcc on the host image; takes 10–30 min once).
+- **Manual**: on a machine with nvcc:
+  ```bash
+  uv sync --extra accel   # triton
+  uv pip install --no-build-isolation "git+https://github.com/thu-ml/SageAttention.git@v2.2.0"
+  ```
 
 On Windows, install `triton-windows` first; community-built SageAttention
 wheels matching your torch/CUDA version can save the source build.

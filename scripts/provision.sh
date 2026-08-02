@@ -38,6 +38,22 @@ else
     uv sync
 fi
 
+# 2b. SageAttention (opt-in: NIDORA_BUILD_SAGE=1) — compiles CUDA kernels from
+# source, needs nvcc; the prebuilt Docker image already ships it.
+if [ "${NIDORA_BUILD_SAGE:-0}" = "1" ] && command -v nvcc >/dev/null 2>&1; then
+    if ! uv run python -c "
+from importlib.metadata import version
+from packaging.version import Version
+import sys
+sys.exit(0 if Version(version('sageattention')) >= Version('2.1.1') else 1)
+" 2>/dev/null; then
+        echo "building SageAttention v2.2.0 (one-time, can take 10-30 min)..."
+        uv pip install ninja
+        uv pip install --no-build-isolation \
+            "git+https://github.com/thu-ml/SageAttention.git@v2.2.0"
+    fi
+fi
+
 # 3. Models (idempotent — snapshot_download skips complete files)
 uv run nidora-ai-inference download --all
 

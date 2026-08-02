@@ -155,6 +155,8 @@ Tuning per GPU class (env vars, set before `serve`):
 For the optional full-precision `wan22-i2v-bf16` profile: 80 GB → `none`,
 48 GB → `model`, 24 GB → `group` (one 14B expert is ~28 GB bf16 > 24 GB).
 
-`NIDORA_ATTENTION=auto` uses SageAttention automatically when the `accel`
-extra is installed (provision.sh installs it whenever `nvidia-smi` is
-present).
+`NIDORA_ATTENTION=auto` uses SageAttention automatically when it's available
+and the GPU is sm80+ (A100/3090 or newer). The Docker image ships it
+prebuilt; provision.sh pods can set `NIDORA_BUILD_SAGE=1` to compile it at
+first boot (~10–30 min once, needs nvcc). Check the model-load logs for
+`attention backend: sage`.

@@ -16,13 +16,17 @@ _BACKEND_NAMES = {"sdpa": "native", "sage": "sage", "flash": "flash"}
 
 def _sage_available() -> bool:
     """diffusers' sage backend needs sageattention>=2.1.1 (source-built from
-    thu-ml/SageAttention; the PyPI 1.x package is too old)."""
+    thu-ml/SageAttention; the PyPI 1.x package is too old) and an sm80+ GPU —
+    its kernels raise at inference time on older cards, so gate here."""
     try:
         from importlib.metadata import version
 
+        import torch
         from packaging.version import Version
 
-        return Version(version("sageattention")) >= Version("2.1.1")
+        if Version(version("sageattention")) < Version("2.1.1"):
+            return False
+        return torch.cuda.get_device_capability() >= (8, 0)
     except Exception:
         return False
 

@@ -28,7 +28,8 @@ dependencies = [
 [project.optional-dependencies]
 # GPU acceleration extras — never required. NOTE: diffusers' sage backend
 # needs sageattention>=2.1.1, which is NOT on PyPI (source build from
-# thu-ml/SageAttention, requires nvcc) — see README. The 1.x PyPI package is
+# thu-ml/SageAttention, requires nvcc) — the Docker image builds it in a
+# dedicated stage; see README for other setups. The 1.x PyPI package is
 # too old and is deliberately not listed here.
 accel = [
     "triton>=3.0 ; sys_platform == 'linux'",
