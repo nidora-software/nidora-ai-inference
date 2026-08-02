@@ -46,6 +46,30 @@ Weights, outputs, and the job store live at the image defaults `/models` and
 `/outputs` on the instance disk. The disk survives **stop/start**; destroying
 the instance deletes it (and re-triggers the ~37 GB download on the next one).
 
+## HTTPS via Cloudflare Tunnel (recommended)
+
+Vast's direct port mappings are plain HTTP to a random `IP:port` that changes
+with every instance. The image ships `cloudflared`: give it a tunnel token and
+the API gets a stable HTTPS hostname (e.g. `https://inference.nidora.ai`)
+independent of the pod's IP/port.
+
+One-time setup (Cloudflare dashboard, domain must be on Cloudflare):
+
+1. **Zero Trust → Networks → Tunnels → Create a tunnel** (type: Cloudflared),
+   name it e.g. `nidora-inference`, and copy the token from the install
+   command (`eyJ...`).
+2. On the tunnel's **Public Hostname** tab add: hostname
+   `inference.nidora.ai` → service `HTTP://localhost:8000`.
+3. Add to the template's Docker options:
+   ```
+   -e NIDORA_CF_TUNNEL_TOKEN=eyJ...
+   ```
+
+The tunnel is outbound-only — with it in place you can remove the `8000/tcp`
+port mapping entirely (nothing needs to reach the pod directly), and clients
+call `https://inference.nidora.ai/...` with the same `X-Api-Key` header.
+Keep `NIDORA_API_KEY` set: the hostname is public.
+
 ## First boot
 
 The API comes up immediately; missing weights (~37 GB: Q6_K GGUF experts,

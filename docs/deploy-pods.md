@@ -80,6 +80,7 @@ API key, first boot, usage) in
    -e NIDORA_WARMUP=wan22-i2v
    -e NIDORA_OFFLOAD=model        # 24 GB cards; "none" on 48 GB+
    -e NIDORA_API_KEY=<secret>     # REQUIRED — Vast instances are public
+   -e NIDORA_CF_TUNNEL_TOKEN=eyJ… # optional: stable HTTPS hostname via Cloudflare Tunnel
    ```
 3. Find the mapped public port on the instance card (Vast maps container
    port 8000 to a random host port) and verify:

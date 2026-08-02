@@ -4,12 +4,19 @@ FROM pytorch/pytorch:2.8.0-cuda12.9-cudnn9-runtime
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+# cloudflared for optional HTTPS via Cloudflare Tunnel (set
+# NIDORA_CF_TUNNEL_TOKEN to activate). "latest" keeps the client current;
+# the tunnel protocol is stable.
+ADD https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 /usr/local/bin/cloudflared
+RUN chmod +x /usr/local/bin/cloudflared
+
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY configs ./configs
 COPY src ./src
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-RUN uv pip install --system --no-cache ".[accel]"
+RUN uv pip install --system --no-cache ".[accel]" && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENV NIDORA_MODELS_DIR=/models \
     NIDORA_OUTPUTS_DIR=/outputs \
@@ -20,4 +27,5 @@ ENV NIDORA_MODELS_DIR=/models \
 VOLUME ["/models", "/outputs"]
 EXPOSE 8000
 
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["nidora-ai-inference", "serve"]
