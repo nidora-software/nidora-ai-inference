@@ -156,15 +156,17 @@ class Wan22I2VPipeline(Pipeline):
         image = fetch_image(params.image)
         height, width = params.size()
 
-        if self._adapter_targets:
-            names = [name for name, _ in self._adapter_targets]
-            scales = [
-                params.lora_scale_transformer
-                if target == "transformer"
-                else params.lora_scale_transformer_2
-                for _, target in self._adapter_targets
-            ]
-            pipe.set_adapters(names, scales)
+        # Per-module (not pipeline-level) so each expert only ever sees its own
+        # adapter — pipeline set_adapters pushes every name into every component.
+        for adapter_name, target in self._adapter_targets:
+            module = getattr(pipe, target, None)
+            if module is not None:
+                scale = (
+                    params.lora_scale_transformer
+                    if target == "transformer"
+                    else params.lora_scale_transformer_2
+                )
+                module.set_adapters([adapter_name], [scale])
 
         if params.sample_shift != self._flow_shift:
             from diffusers import UniPCMultistepScheduler
