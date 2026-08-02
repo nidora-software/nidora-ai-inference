@@ -31,12 +31,14 @@ pipelines:
   #     guidance_scale_2: 3.5
   #     sample_shift: 5.0
 
-  flux-t2i:
-    kind: flux_t2i
-    model: flux-dev
-    defaults:
-      num_inference_steps: 20
-      guidance_scale: 3.5
+  # FLUX.1-dev is gated on HuggingFace — accept the license and set HF_TOKEN,
+  # then uncomment to enable (adds ~35GB to `download --all`).
+  # flux-t2i:
+  #   kind: flux_t2i
+  #   model: flux-dev
+  #   defaults:
+  #     num_inference_steps: 20
+  #     guidance_scale: 3.5
 
   mock:
     kind: mock
