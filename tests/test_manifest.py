@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from nidora_ai_inference.core.config import LoraRef, ModelEntry, PipelineProfile
+from nidora_ai_inference.core.config import FileRef, LoraRef, ModelEntry, PipelineProfile
 from nidora_ai_inference.models.manifest import (
     ModelMissing,
+    download_for_profiles,
     models_for_profiles,
     resolve_lora_file,
     resolve_model,
@@ -54,6 +55,71 @@ def test_resolve_lora_file(settings):
 
     with pytest.raises(ModelMissing):
         resolve_lora_file(settings, "distill", "missing.safetensors", manifest)
+
+
+def test_dir_with_only_hidden_files_counts_as_missing(settings):
+    # An interrupted snapshot_download leaves only .cache/ behind — the model
+    # must still resolve as missing so auto-download re-fetches it.
+    d = settings.models_dir / "wan" / ".cache" / "huggingface"
+    d.mkdir(parents=True)
+    (d / "download.lock").write_text("")
+    manifest = {"wan": ModelEntry(source="Wan-AI/Wan2.2-I2V-A14B-Diffusers")}
+    with pytest.raises(ModelMissing):
+        resolve_model(settings, "wan", manifest)
+
+
+def test_auto_download_refetches_partial_model(settings, monkeypatch):
+    # Dir exists with *some* content, but the file the profile references is
+    # absent — download_for_profiles must include it in the fetch list.
+    import yaml
+
+    gguf_dir = settings.models_dir / "gguf"
+    gguf_dir.mkdir(parents=True)
+    (gguf_dir / "README.md").write_text("partial")
+    settings.models_config.write_text(
+        yaml.safe_dump({"models": {"gguf": {"source": "org/repo"}}})
+    )
+    profiles = {
+        "p": PipelineProfile(
+            name="p",
+            kind="wan22_i2v",
+            gguf={"transformer": FileRef(model="gguf", weight_name="HighNoise/model.gguf")},
+        )
+    }
+
+    fetched: list[str] = []
+    monkeypatch.setattr(
+        "nidora_ai_inference.models.manifest.download_models",
+        lambda settings, manifest, names: fetched.extend(names),
+    )
+    download_for_profiles(settings, profiles)
+    assert fetched == ["gguf"]
+
+
+def test_auto_download_skips_complete_model(settings, monkeypatch):
+    import yaml
+
+    gguf_dir = settings.models_dir / "gguf" / "HighNoise"
+    gguf_dir.mkdir(parents=True)
+    (gguf_dir / "model.gguf").write_text("x")
+    settings.models_config.write_text(
+        yaml.safe_dump({"models": {"gguf": {"source": "org/repo"}}})
+    )
+    profiles = {
+        "p": PipelineProfile(
+            name="p",
+            kind="wan22_i2v",
+            gguf={"transformer": FileRef(model="gguf", weight_name="HighNoise/model.gguf")},
+        )
+    }
+
+    fetched: list[str] = []
+    monkeypatch.setattr(
+        "nidora_ai_inference.models.manifest.download_models",
+        lambda settings, manifest, names: fetched.extend(names),
+    )
+    download_for_profiles(settings, profiles)
+    assert fetched == []
 
 
 def test_models_for_profiles_dedupes():

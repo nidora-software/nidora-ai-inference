@@ -47,13 +47,19 @@ def local_path_for(settings: Settings, name: str, entry: ModelEntry) -> Path:
     return settings.models_dir / name
 
 
+def _has_model_files(path: Path) -> bool:
+    # Hidden entries don't count: an interrupted snapshot_download leaves
+    # .cache/ behind, which must not make the model look present.
+    return any(not p.name.startswith(".") for p in path.iterdir())
+
+
 def resolve_model(settings: Settings, name: str, manifest: dict[str, ModelEntry]) -> Path:
     """Resolve a manifest name to an existing local path or raise ModelMissing."""
     entry = manifest.get(name)
     if entry is None:
         raise KeyError(f"model {name!r} is not in the manifest ({settings.models_config})")
     path = local_path_for(settings, name, entry)
-    if not path.exists() or (path.is_dir() and not any(path.iterdir())):
+    if not path.exists() or (path.is_dir() and not _has_model_files(path)):
         raise ModelMissing(name, entry, path)
     return path
 
@@ -109,17 +115,28 @@ def download_models(
 
 
 def download_for_profiles(settings: Settings, profiles: dict[str, PipelineProfile]) -> None:
-    """Startup hook for NIDORA_AUTO_DOWNLOAD=1: fetch anything missing."""
+    """Startup hook for NIDORA_AUTO_DOWNLOAD=1: fetch anything missing.
+
+    Checks the specific files each profile references (GGUF/LoRA weights),
+    not just directory presence — a partial or interrupted download must
+    trigger a re-fetch (snapshot_download resumes; complete files are free).
+    """
     manifest = load_model_manifest(settings.models_config)
-    missing = []
-    for name in models_for_profiles(profiles):
-        if name not in manifest:
-            log.warning("profile references unknown model %r — skipping", name)
-            continue
-        try:
-            resolve_model(settings, name, manifest)
-        except ModelMissing:
-            missing.append(name)
+    missing: list[str] = []
+    for profile in profiles.values():
+        refs: list[tuple[str, str | None]] = []
+        if profile.model:
+            refs.append((profile.model, None))
+        refs += [(r.model, r.weight_name) for r in [*profile.gguf.values(), *profile.loras.values()]]
+        for name, weight_name in refs:
+            if name not in manifest:
+                log.warning("profile references unknown model %r — skipping", name)
+                continue
+            try:
+                resolve_lora_file(settings, name, weight_name, manifest)
+            except ModelMissing:
+                if name not in missing:
+                    missing.append(name)
     if missing:
         log.info("auto-download enabled — fetching: %s", ", ".join(missing))
         download_models(settings, manifest, missing)
