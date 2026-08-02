@@ -12,6 +12,7 @@ import base64
 import io
 import logging
 import math
+import time
 from typing import ClassVar, Literal
 
 from PIL import Image
@@ -210,6 +211,9 @@ class Wan22I2VPipeline(Pipeline):
             [getattr(pipe, "transformer", None), getattr(pipe, "transformer_2", None)],
             device,
         )
+        # tqdm's \r-based bar garbles non-tty logs (pods) and only flushes at
+        # the end; per-step progress is logged explicitly from generate().
+        pipe.set_progress_bar_config(disable=True)
         self._pipe = pipe
 
     def _set_scheduler(self, name: str, shift: float) -> None:
@@ -261,11 +265,28 @@ class Wan22I2VPipeline(Pipeline):
         if params.seed is not None:
             generator = torch.Generator(device="cpu").manual_seed(params.seed)
 
+        # Denoise steps fill progress up to ~90%; the remainder covers VAE
+        # decode + mp4 encode, which happen after the last step callback.
+        total_steps = params.num_inference_steps
+        started = time.monotonic()
+
         def on_step_end(pipeline, step, timestep, callback_kwargs):
             ctx.check_cancelled()
-            ctx.report_progress(step + 1, params.num_inference_steps)
+            done = step + 1
+            elapsed = time.monotonic() - started
+            eta = elapsed / done * (total_steps - done)
+            log.info(
+                "job %s: denoise step %d/%d (%.0fs elapsed, ~%.0fs left)",
+                ctx.job_id,
+                done,
+                total_steps,
+                elapsed,
+                eta,
+            )
+            ctx.report_progress(done * 9, total_steps * 10)
             return callback_kwargs
 
+        log.info("job %s: denoising, %d steps", ctx.job_id, total_steps)
         result = pipe(
             image=image,
             prompt=params.prompt,
@@ -281,6 +302,14 @@ class Wan22I2VPipeline(Pipeline):
         )
 
         frames = result.frames[0]
+        log.info(
+            "job %s: denoise + decode done in %.0fs, writing mp4 (%d frames @ %d fps)",
+            ctx.job_id,
+            time.monotonic() - started,
+            len(frames),
+            params.frames_per_second,
+        )
+        ctx.report_progress(97, 100)
         path = write_mp4(
             frames,
             ctx.output_dir / f"{ctx.job_id}.mp4",

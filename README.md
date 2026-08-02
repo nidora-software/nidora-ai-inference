@@ -42,9 +42,9 @@ curl localhost:8000/v1/jobs/j_ab12cd34ef56
 ```
 
 Default generation settings (from the `wan22-i2v` profile): aspect-preserving
-sizing (input's longer side → 480/720, `fit: "fixed"` for exact 480×832),
-193 frames @ 19 fps, 4 euler steps, cfg 1, Lightning LoRA strengths 0.5
-(high-noise) / 1.0 (low-noise). Every value is overridable per job — see
+sizing (largest size fitting the 480p/720p pixel budget, `fit: "fixed"` for
+exact 480×832), 81 frames @ 16 fps ≈ 5 s, 4 euler steps, cfg 1, Lightning
+LoRA strengths 0.5 (high-noise) / 1.0 (low-noise). Every value is overridable per job — see
 `GET /v1/pipelines` for the full schema, including `scheduler`,
 `boundary_ratio` (expert handoff), `crf`, and per-expert LoRA scales.
 
@@ -80,6 +80,7 @@ All env vars are optional (prefix `NIDORA_`, see `.env.sample`):
 | `NIDORA_OFFLOAD` | `none` | `none` / `model` / `sequential` / `group` |
 | `NIDORA_ATTENTION` | `auto` | `auto` / `sdpa` / `sage` / `flash` |
 | `NIDORA_AUTO_DOWNLOAD` | `0` | `1` = download missing models at startup |
+| `NIDORA_WARMUP` | `auto` | pipeline to load at startup: `auto` = first profile, `none` = skip, or a profile name |
 | `NIDORA_API_KEY` | unset | when set, `/v1/*` requires `X-Api-Key: <key>` (or `Authorization: Bearer`); `/health` stays open. **Set this on any public deployment.** |
 
 ### VRAM guidance (Wan 2.2 A14B i2v)

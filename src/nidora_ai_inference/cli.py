@@ -35,9 +35,17 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _serve(args: argparse.Namespace) -> int:
+    import os
+
     import uvicorn
 
     from .core.config import Settings
+
+    # \r-based progress bars (tqdm, HF downloads) garble non-tty logs (pods,
+    # `docker logs`) — real progress is emitted as log lines instead.
+    if not sys.stderr.isatty():
+        os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+        os.environ.setdefault("TQDM_DISABLE", "1")
 
     settings = Settings()
     host = args.host or settings.host

@@ -76,7 +76,7 @@ curl -O https://<POD_ID>-8000.proxy.runpod.net/v1/outputs/<JOB_ID>/<JOB_ID>.mp4
 
 Cancel: `DELETE /v1/jobs/<JOB_ID>`. List pipelines + full parameter schemas: `GET /v1/pipelines`.
 
-Note: the **first job after a boot** also loads the model into RAM/VRAM (a few minutes); subsequent jobs go straight to inference.
+Note: the default pipeline is **warmed up automatically at boot** (`NIDORA_WARMUP=auto`; set a profile name or `none` to change that) — watch `GET /health` for `loaded_pipeline`. You can also load/unload explicitly with `POST /v1/pipelines/<NAME>/load` and `POST /v1/pipelines/<NAME>/unload`.
 
 ## Key parameters (wan22-i2v)
 
@@ -84,10 +84,10 @@ Note: the **first job after a boot** also loads the model into RAM/VRAM (a few m
 |---|---|---|
 | `image` | — | URL, data URI, or base64 |
 | `prompt` | — | motion/scene description |
-| `resolution` | `480p` | target size: longer side 480 / 720 |
-| `fit` | `preserve` | keep input aspect ratio; `fixed` = exact 480×832 (`aspect_ratio` 9:16/16:9) |
-| `num_frames` | 193 | ~10 s at 19 fps |
-| `frames_per_second` | 19 | |
+| `resolution` | `480p` | target pixel budget (480×832 / 720×1280) |
+| `fit` | `preserve` | keep input aspect ratio at the largest size fitting the budget; `fixed` = exact 480×832 (`aspect_ratio` 9:16/16:9) |
+| `num_frames` | 81 | ~5 s at 16 fps |
+| `frames_per_second` | 16 | |
 | `num_inference_steps` | 4 | Lightning distilled |
 | `scheduler` | `euler` | or `unipc` |
 | `guidance_scale` / `_2` | 1.0 | per-expert CFG |

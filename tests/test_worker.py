@@ -136,6 +136,44 @@ def test_cancel_terminal_returns_none(settings):
         worker.stop()
 
 
+def wait_loaded(worker, expected, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if worker.loaded_pipeline == expected:
+            return
+        time.sleep(0.02)
+    raise TimeoutError(f"loaded_pipeline stuck at {worker.loaded_pipeline}")
+
+
+def test_warmup_and_offload(settings):
+    store, worker = make_worker(settings)
+    worker.start()
+    try:
+        worker.warmup("mock")
+        wait_loaded(worker, "mock")
+        # Offloading a profile that isn't loaded is a no-op.
+        worker.offload("other")
+        time.sleep(0.2)
+        assert worker.loaded_pipeline == "mock"
+        worker.offload("mock")
+        wait_loaded(worker, None)
+    finally:
+        worker.stop()
+
+
+def test_warmup_unknown_profile_keeps_worker_alive(settings):
+    store, worker = make_worker(settings)
+    worker.start()
+    try:
+        worker.warmup("does-not-exist")
+        job = store.create("mock", {})
+        worker.submit(job.id)
+        done = wait_state(store, job.id, {JobState.COMPLETED, JobState.FAILED})
+        assert done.state == JobState.COMPLETED
+    finally:
+        worker.stop()
+
+
 def test_requeue_on_startup(settings):
     store, worker = make_worker(settings)
     job = store.create("mock", {})

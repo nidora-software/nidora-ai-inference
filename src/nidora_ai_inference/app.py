@@ -50,6 +50,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.worker = worker
 
         worker.start()
+        warmup_target = None
+        if settings.warmup == "auto":
+            warmup_target = next(iter(profiles), None)  # first profile = default
+        elif settings.warmup not in ("none", "off", ""):
+            warmup_target = settings.warmup
+        if warmup_target is not None:
+            if warmup_target in profiles:
+                log.info("warming up pipeline at startup: %s", warmup_target)
+                worker.warmup(warmup_target)
+            else:
+                log.warning("NIDORA_WARMUP=%r is not a known pipeline — skipped", settings.warmup)
         log.info(
             "nidora-ai-inference %s ready — device=%s, pipelines=%s",
             __version__,

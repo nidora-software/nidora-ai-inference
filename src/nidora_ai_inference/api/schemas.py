@@ -63,4 +63,5 @@ class HealthResponse(BaseModel):
     attention: str
     dtype: str
     loaded_pipeline: str | None
+    activity: str = "idle"  # "idle" | "loading:<profile>" | "job:<job_id>"
     queue_depth: int

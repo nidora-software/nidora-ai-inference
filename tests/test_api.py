@@ -19,6 +19,50 @@ def test_health(client):
     body = res.json()
     assert body["status"] == "ok"
     assert body["device"] == "cpu"
+    assert "activity" in body
+
+
+def test_auto_warmup_on_startup(client):
+    # NIDORA_WARMUP defaults to "auto": the first profile loads at boot.
+    import time
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if client.get("/health").json()["loaded_pipeline"] == "mock":
+            break
+        time.sleep(0.02)
+    assert client.get("/health").json()["loaded_pipeline"] == "mock"
+
+
+def test_pipeline_load_and_unload(client):
+    import time
+
+    res = client.post("/v1/pipelines/mock/load")
+    assert res.status_code == 202
+    assert res.json()["state"] == "load_queued"
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if client.get("/health").json()["loaded_pipeline"] == "mock":
+            break
+        time.sleep(0.02)
+    assert client.get("/health").json()["loaded_pipeline"] == "mock"
+
+    res = client.post("/v1/pipelines/mock/unload")
+    assert res.status_code == 202
+    assert res.json()["state"] == "unload_queued"
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if client.get("/health").json()["loaded_pipeline"] is None:
+            break
+        time.sleep(0.02)
+    assert client.get("/health").json()["loaded_pipeline"] is None
+
+
+def test_pipeline_load_unknown_404(client):
+    assert client.post("/v1/pipelines/nope/load").status_code == 404
+    assert client.post("/v1/pipelines/nope/unload").status_code == 404
 
 
 def test_job_end_to_end(client):

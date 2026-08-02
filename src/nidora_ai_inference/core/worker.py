@@ -11,6 +11,7 @@ import logging
 import queue
 import secrets
 import threading
+from dataclasses import dataclass
 
 from ..outputs.storage import artifact_records, job_output_dir
 from ..pipelines import JobCancelled, JobContext, Pipeline, resolve_pipeline_class
@@ -20,6 +21,16 @@ from .jobs import JobState, JobStore
 log = logging.getLogger("nidora.worker")
 
 _STOP = object()
+
+
+@dataclass
+class _Warmup:
+    profile: str
+
+
+@dataclass
+class _Offload:
+    profile: str | None  # None = whatever is currently loaded
 
 
 class GpuWorker:
@@ -38,6 +49,7 @@ class GpuWorker:
         self._thread: threading.Thread | None = None
         self._current: Pipeline | None = None
         self._current_profile: str | None = None
+        self._activity: str = "idle"
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -56,10 +68,23 @@ class GpuWorker:
     def loaded_pipeline(self) -> str | None:
         return self._current_profile
 
+    @property
+    def activity(self) -> str:
+        """"idle" | "loading:<profile>" | "job:<job_id>"."""
+        return self._activity
+
     # -- job submission / cancellation --------------------------------------
 
     def submit(self, job_id: str) -> None:
         self._queue.put(job_id)
+
+    def warmup(self, profile_name: str) -> None:
+        """Queue a pipeline load ahead of any job needing it."""
+        self._queue.put(_Warmup(profile_name))
+
+    def offload(self, profile_name: str | None = None) -> None:
+        """Queue an unload of `profile_name` (or whatever is loaded)."""
+        self._queue.put(_Offload(profile_name))
 
     def cancel(self, job_id: str) -> str | None:
         """Returns the resulting state ("cancelled" | "cancelling") or None if
@@ -83,7 +108,21 @@ class GpuWorker:
             if item is _STOP:
                 self._unload_current()
                 return
-            self._process(item)
+            if isinstance(item, _Warmup):
+                self._warmup(item.profile)
+            elif isinstance(item, _Offload):
+                if item.profile is None or item.profile == self._current_profile:
+                    self._unload_current()
+            else:
+                self._process(item)
+            self._activity = "idle"
+
+    def _warmup(self, profile_name: str) -> None:
+        try:
+            self._ensure_pipeline(profile_name)
+            log.info("warmup done: %s", profile_name)
+        except Exception:  # noqa: BLE001 — warmup errors must never kill the worker
+            log.exception("warmup failed: %s", profile_name)
 
     def _process(self, job_id: str) -> None:
         # CAS queued -> running: skips jobs cancelled while waiting in queue.
@@ -97,8 +136,10 @@ class GpuWorker:
         with self._cancel_lock:
             self._cancel_events[job_id] = cancel_event
 
+        self._activity = f"job:{job_id}"
         try:
             pipeline = self._ensure_pipeline(job.pipeline)
+            self._activity = f"job:{job_id}"  # _ensure_pipeline may have set loading:*
             params = pipeline.validate_params(job.params)
             # Materialize a random seed so every generation is reproducible:
             # the effective seed is written back into the job's stored params.
@@ -144,6 +185,7 @@ class GpuWorker:
         cls = resolve_pipeline_class(profile.kind)
         pipeline = cls(profile, self.settings)
         log.info("loading pipeline %s (kind=%s)", profile_name, profile.kind)
+        self._activity = f"loading:{profile_name}"
         try:
             pipeline.load()
         except Exception:

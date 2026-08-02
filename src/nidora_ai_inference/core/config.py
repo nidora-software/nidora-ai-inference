@@ -28,6 +28,11 @@ class Settings(BaseSettings):
 
     auto_download: bool = False
 
+    # Pipeline profile to load at startup so the first job doesn't pay the
+    # model-load cost. "auto" = the first profile in pipelines.yaml (the
+    # default pipeline), "none" = skip, or an explicit profile name.
+    warmup: str = "auto"
+
     # When set, all /v1/* endpoints require this key via the X-Api-Key header
     # (or Authorization: Bearer). /health stays open for load balancers.
     api_key: str | None = None

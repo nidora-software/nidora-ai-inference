@@ -85,6 +85,37 @@ def list_pipelines(request: Request) -> list[PipelineInfo]:
     return out
 
 
+@router.post("/v1/pipelines/{name}/load", status_code=202)
+def load_pipeline(name: str, request: Request) -> dict[str, str | None]:
+    """Warmup: queue a pipeline load so the first job doesn't pay the cost.
+    Runs on the worker thread, serialized behind any queued jobs."""
+    state = request.app.state
+    if name not in state.profiles:
+        raise HTTPException(404, f"unknown pipeline: {name!r}")
+    state.worker.warmup(name)
+    return {
+        "pipeline": name,
+        "state": "load_queued",
+        "loaded_pipeline": state.worker.loaded_pipeline,
+        "activity": state.worker.activity,
+    }
+
+
+@router.post("/v1/pipelines/{name}/unload", status_code=202)
+def unload_pipeline(name: str, request: Request) -> dict[str, str | None]:
+    """Queue an unload of `name` (no-op if it isn't the loaded pipeline)."""
+    state = request.app.state
+    if name not in state.profiles:
+        raise HTTPException(404, f"unknown pipeline: {name!r}")
+    state.worker.offload(name)
+    return {
+        "pipeline": name,
+        "state": "unload_queued",
+        "loaded_pipeline": state.worker.loaded_pipeline,
+        "activity": state.worker.activity,
+    }
+
+
 @router.get("/v1/outputs/{job_id}/{filename}")
 def get_output(job_id: str, filename: str, request: Request) -> FileResponse:
     path = resolve_output_file(request.app.state.settings.outputs_dir, job_id, filename)
@@ -103,5 +134,6 @@ def health(request: Request) -> HealthResponse:
         attention=state.settings.attention,
         dtype=state.settings.dtype,
         loaded_pipeline=state.worker.loaded_pipeline,
+        activity=state.worker.activity,
         queue_depth=state.store.queue_depth(),
     )
