@@ -43,9 +43,12 @@ RUN uv pip install --system --no-cache ".[accel]" /tmp/sage-dist/*.whl \
     && rm -rf /tmp/sage-dist \
     && chmod +x /usr/local/bin/docker-entrypoint.sh
 
+# NIDORA_OFFLOAD=model is the fail-safe default: fits every 24 GB+ card.
+# Override with -e NIDORA_OFFLOAD=none on 48 GB+ GPUs for max speed.
 ENV NIDORA_MODELS_DIR=/models \
     NIDORA_OUTPUTS_DIR=/outputs \
     NIDORA_DB_PATH=/outputs/jobs.sqlite3 \
+    NIDORA_OFFLOAD=model \
     HF_HUB_ENABLE_HF_TRANSFER=1 \
     PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 

@@ -14,21 +14,29 @@ log = logging.getLogger("nidora.attention")
 _BACKEND_NAMES = {"sdpa": "native", "sage": "sage", "flash": "flash"}
 
 
-def _sage_available() -> bool:
-    """diffusers' sage backend needs sageattention>=2.1.1 (source-built from
-    thu-ml/SageAttention; the PyPI 1.x package is too old) and an sm80+ GPU —
-    its kernels raise at inference time on older cards, so gate here."""
+def _sage_unavailable_reason() -> str | None:
+    """None when diffusers' sage backend is usable; otherwise why not.
+    Needs sageattention>=2.1.1 (source-built from thu-ml/SageAttention; the
+    PyPI 1.x package is too old) and an sm80+ GPU — its kernels raise at
+    inference time on older cards, so gate here."""
     try:
-        from importlib.metadata import version
+        from importlib.metadata import PackageNotFoundError, version
 
         import torch
         from packaging.version import Version
 
-        if Version(version("sageattention")) < Version("2.1.1"):
-            return False
-        return torch.cuda.get_device_capability() >= (8, 0)
-    except Exception:
-        return False
+        try:
+            installed = version("sageattention")
+        except PackageNotFoundError:
+            return "sageattention is not installed"
+        if Version(installed) < Version("2.1.1"):
+            return f"sageattention {installed} < 2.1.1"
+        capability = torch.cuda.get_device_capability()
+        if capability < (8, 0):
+            return f"GPU is sm{capability[0]}{capability[1]} (< sm80)"
+        return None
+    except Exception as exc:  # noqa: BLE001 — availability probe must not raise
+        return f"{type(exc).__name__}: {exc}"
 
 
 def apply_attention_backend(setting: str, modules: list, device: str) -> str:
@@ -37,7 +45,10 @@ def apply_attention_backend(setting: str, modules: list, device: str) -> str:
     if device != "cuda" or setting == "sdpa":
         choice = "sdpa"
     elif setting == "auto":
-        choice = "sage" if _sage_available() else "sdpa"
+        reason = _sage_unavailable_reason()
+        if reason is not None:
+            log.warning("sage attention unavailable (%s) — using sdpa", reason)
+        choice = "sdpa" if reason else "sage"
     else:
         choice = setting
 
