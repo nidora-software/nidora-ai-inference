@@ -48,12 +48,18 @@ build_sage() { # $1 = wheel cache dir for this GPU arch
             >>"$blog" 2>&1 || { log "g++ install failed — see $blog"; return 1; }
     fi
     if ! command -v nvcc >/dev/null 2>&1; then
-        log "installing CUDA compiler (conda cuda-nvcc, one-time, ~2 min)..."
-        # Everything pinned to 12.9 — an unpinned cccl pulls CUDA 13 headers
-        # under a 12.9 nvcc, which breaks the kernel compile.
-        conda install -y -q -c nvidia cuda-nvcc=12.9 cuda-cudart-dev=12.9 "cuda-cccl=12.9" \
-            >>"$blog" 2>&1 || { log "cuda-nvcc install failed — see $blog"; return 1; }
+        # Full toolkit, not piecemeal packages: torch's headers pull in
+        # cusparse.h/cublas_v2.h/cuda_fp16.h etc., and hand-picking dev
+        # packages keeps missing one. Pinned to the image's CUDA 12.9.
+        log "installing CUDA toolkit 12.9 (conda, one-time, ~3-5 min)..."
+        conda install -y -q -c nvidia cuda-toolkit=12.9 \
+            >>"$blog" 2>&1 || { log "cuda-toolkit install failed — see $blog"; return 1; }
     fi
+    # conda parks CUDA headers/libs under targets/; torch's extension build
+    # only searches $CUDA_HOME/include, so widen the compiler search paths.
+    export CUDA_HOME="${CUDA_HOME:-/opt/conda}"
+    export CPATH="/opt/conda/targets/x86_64-linux/include${CPATH:+:$CPATH}"
+    export LIBRARY_PATH="/opt/conda/targets/x86_64-linux/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
     local src
     src=$(mktemp -d)
     log "fetching SageAttention ${SAGE_REF}..."
