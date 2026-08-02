@@ -19,8 +19,9 @@ Self-hosted async inference API serving **Wan 2.2 I2V A14B** (MoE high/low-noise
 | Disk | **100 GB** | ~37 GB of weights + outputs headroom |
 | Ports | HTTP 8000 | Vast maps it to a random public port |
 
-48 GB+ cards can set `NIDORA_OFFLOAD=none` (both experts resident) for max
-speed.
+48 GB+ cards can set `NIDORA_OFFLOAD=none` (both experts + text encoder
+resident, ~35 GB) for max speed. 24–32 GB cards (4090, 5090) need
+`NIDORA_OFFLOAD=model`.
 
 ## Template setup
 

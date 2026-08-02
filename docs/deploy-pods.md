@@ -150,6 +150,7 @@ Tuning per GPU class (env vars, set before `serve`):
 | GPU | Settings (default GGUF profile) |
 |---|---|
 | 48 GB+ (A6000/L40S/A100/H100) | `NIDORA_OFFLOAD=none` |
+| 32 GB (RTX 5090) | `NIDORA_OFFLOAD=model` — the full set (~35 GB) doesn't fit |
 | 4090/3090 24 GB | `NIDORA_OFFLOAD=model`, stick to 480p |
 
 For the optional full-precision `wan22-i2v-bf16` profile: 80 GB → `none`,

@@ -90,8 +90,8 @@ Default profile (Q6_K GGUF experts, ~12 GB each):
 
 | GPU | Setting |
 |---|---|
-| 48 GB+ | `NIDORA_OFFLOAD=none` — both experts resident |
-| 24 GB (4090/3090) | `NIDORA_OFFLOAD=model` — one expert on GPU at a time |
+| 48 GB+ | `NIDORA_OFFLOAD=none` — both experts + text encoder resident (~35 GB) |
+| 24–32 GB (4090/3090/5090) | `NIDORA_OFFLOAD=model` — one component on GPU at a time |
 
 Full-precision `wan22-i2v-bf16` profile (~28 GB per expert): 80 GB cards run
 `none`, 48 GB cards run `model`, and 24 GB cards require `group` (streams
