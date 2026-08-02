@@ -89,19 +89,21 @@ build_sage() { # $1 = wheel cache dir for this GPU arch
     log "SageAttention built and cached: $1/$(basename "$wheel")"
 }
 
-reload_pipeline() {
-    # Re-apply the attention backend by unloading/reloading whatever pipeline
-    # is currently loaded (queued on the worker, so it never races a job).
-    local hdr=()
-    [ -n "${NIDORA_API_KEY:-}" ] && hdr=(-H "X-Api-Key: ${NIDORA_API_KEY}")
-    local lp
-    lp=$(curl -s localhost:8000/health \
-        | python -c 'import sys,json; print(json.load(sys.stdin).get("loaded_pipeline") or "")' \
-        2>/dev/null) || return 0
-    [ -n "$lp" ] || { log "no pipeline loaded yet — sage applies on next load"; return 0; }
-    log "reloading pipeline ${lp} to enable sage attention"
-    curl -s -X POST "${hdr[@]}" "localhost:8000/v1/pipelines/${lp}/unload" >/dev/null || true
-    curl -s -X POST "${hdr[@]}" "localhost:8000/v1/pipelines/${lp}/load" >/dev/null || true
+request_server_restart() {
+    # diffusers snapshots sageattention availability at import time, so a
+    # mid-process install needs a full server restart, not a pipeline
+    # reload. Wait until the worker is idle so no running job is killed.
+    local i act
+    for i in $(seq 1 360); do
+        act=$(curl -s localhost:8000/health \
+            | python -c 'import sys,json; d=json.load(sys.stdin); print(d.get("activity","idle"), d.get("queue_depth",0))' \
+            2>/dev/null) || act="idle 0"
+        [ "$act" = "idle 0" ] && break
+        sleep 10
+    done
+    log "restarting server to activate sage attention"
+    touch /tmp/nidora-restart
+    kill "$(cat /tmp/nidora-server.pid 2>/dev/null)" 2>/dev/null || true
 }
 
 provision_sage() {
@@ -120,13 +122,13 @@ provision_sage() {
         log "SageAttention ready (cached wheel)"
         return 0
     fi
-    # First boot on this volume/GPU combo: build in the background and hot-
-    # reload when done; the server starts on sdpa meanwhile.
+    # First boot on this volume/GPU combo: build in the background, then
+    # restart the server (when idle); it starts on sdpa meanwhile.
     (
         set +e
         if build_sage "$cache_dir"; then
             sleep 5 # let uvicorn come up before poking the API
-            reload_pipeline
+            request_server_restart
         else
             log "SageAttention build failed — continuing on sdpa"
         fi
@@ -141,4 +143,21 @@ case "${NIDORA_ATTENTION:-auto}" in
         ;;
 esac
 
-exec "$@"
+# Supervised server: restarts once when the sage build requests it (fresh
+# imports pick up the new package); any other exit propagates as-is.
+SERVER_PID=
+forward_term() { [ -n "$SERVER_PID" ] && kill -TERM "$SERVER_PID" 2>/dev/null; }
+trap forward_term TERM INT
+while true; do
+    "$@" &
+    SERVER_PID=$!
+    echo "$SERVER_PID" >/tmp/nidora-server.pid
+    code=0
+    wait "$SERVER_PID" || code=$? # non-zero on kill; must not trip set -e
+    if [ -f /tmp/nidora-restart ]; then
+        rm -f /tmp/nidora-restart
+        log "server restarting (SageAttention activation)"
+        continue
+    fi
+    exit "$code"
+done
