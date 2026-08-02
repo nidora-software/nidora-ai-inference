@@ -26,6 +26,8 @@ class JobResponse(BaseModel):
     state: str
     progress: float = 0.0
     error: str | None = None
+    # Submitted params plus server-filled effective values (e.g. random seed).
+    params: dict[str, Any] = Field(default_factory=dict)
     artifacts: list[ArtifactInfo] = Field(default_factory=list)
     created_at: str
     started_at: str | None = None
@@ -39,6 +41,7 @@ class JobResponse(BaseModel):
             state=job.state,
             progress=job.progress,
             error=job.error,
+            params=job.params,
             artifacts=[ArtifactInfo(**a) for a in job.artifacts],
             created_at=job.created_at,
             started_at=job.started_at,

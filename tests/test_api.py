@@ -26,9 +26,11 @@ def test_job_end_to_end(client):
     assert res.status_code == 202
     job = res.json()
     assert job["state"] == "queued"
+    assert job["params"] == {"prompt": "gradient"}
 
     done = wait_for_state(client, job["id"], {"completed", "failed"})
     assert done["state"] == "completed"
+    assert isinstance(done["params"].get("seed"), int)  # effective seed echoed back
     assert done["progress"] == 1.0
     assert len(done["artifacts"]) == 1
     artifact = done["artifacts"][0]
