@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import math
 from typing import ClassVar, Literal
 
 from PIL import Image
@@ -30,9 +31,10 @@ FIXED_RESOLUTIONS: dict[str, tuple[int, int]] = {
     "720p": (1280, 720),
 }
 
-# Preserve mode: the input image keeps its aspect ratio; its longer side is
-# scaled to this many pixels (matches the ComfyUI template's resize node).
-LONG_SIDE: dict[str, int] = {"480p": 480, "720p": 720}
+# Preserve mode: the input image keeps its aspect ratio and is scaled to the
+# largest size whose pixel area fits the resolution bucket (same convention as
+# the diffusers/Replicate Wan pipelines).
+MAX_AREA: dict[str, int] = {"480p": 480 * 832, "720p": 720 * 1280}
 
 DEFAULT_NEGATIVE_PROMPT = (
     "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，"
@@ -47,7 +49,8 @@ class Wan22I2VParams(BaseModel):
     prompt: str
     negative_prompt: str = DEFAULT_NEGATIVE_PROMPT
     resolution: Literal["480p", "720p"] = "480p"
-    # "preserve": keep the input image's aspect ratio, longer side = 480/720.
+    # "preserve": keep the input image's aspect ratio at the largest size
+    # whose pixel area fits the 480p/720p bucket.
     # "fixed": exact 480×832 / 720×1280 per aspect_ratio.
     fit: Literal["preserve", "fixed"] = "preserve"
     aspect_ratio: Literal["9:16", "16:9"] = "9:16"  # fixed mode only
@@ -68,8 +71,8 @@ class Wan22I2VParams(BaseModel):
     seed: int | None = None
 
 
-def _snap16(value: float) -> int:
-    return max(16, round(value / 16) * 16)
+def _floor16(value: float) -> int:
+    return max(16, round(value) // 16 * 16)
 
 
 def compute_size(
@@ -85,8 +88,8 @@ def compute_size(
             height, width = width, height
         return height, width
     img_w, img_h = image_size
-    scale = LONG_SIDE[resolution] / max(img_w, img_h)
-    return _snap16(img_h * scale), _snap16(img_w * scale)
+    scale = math.sqrt(MAX_AREA[resolution] / (img_w * img_h))
+    return _floor16(img_h * scale), _floor16(img_w * scale)
 
 
 def fetch_image(source: str) -> Image.Image:

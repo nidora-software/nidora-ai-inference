@@ -37,18 +37,17 @@ def test_fixed_size_mapping():
     assert compute_size((100, 100), "720p", "fixed", "16:9") == (720, 1280)
 
 
-def test_preserve_size_scales_longer_side():
-    # Portrait 9:16 input: height is the longer side -> 480.
+def test_preserve_size_fits_bucket_area():
+    # Portrait 9:16 input: largest /16 size whose area fits 480*832.
     h, w = compute_size((1080, 1920), "480p", "preserve", "9:16")
-    assert h == 480
-    assert w == 272  # 270 snapped to /16
-    # Landscape input: width is the longer side.
+    assert (h, w) == (832, 464)
+    assert h * w <= 480 * 832
+    # Landscape input: dimensions swap.
     h, w = compute_size((1920, 1080), "480p", "preserve", "9:16")
-    assert (h, w) == (272, 480)
-    # 720p target.
+    assert (h, w) == (464, 832)
+    # 720p target: 9:16 fits the bucket exactly.
     h, w = compute_size((1080, 1920), "720p", "preserve", "9:16")
-    assert h == 720
-    assert w % 16 == 0
+    assert (h, w) == (1280, 720)
 
 
 def test_preserve_size_multiples_of_16():
