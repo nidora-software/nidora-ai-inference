@@ -110,7 +110,10 @@ PyPI (the 1.x PyPI package is too old and won't be used), plus an sm80+ GPU
 - **Docker image**: SageAttention v2.2.0 is **prebuilt into the image** for
   sm 8.0 / 8.6 / 8.9 / 9.0 / 12.0 (A100, 3090/A6000, 4090/L40S, H100,
   RTX 5090) — nothing to do; `auto` uses it. Look for
-  `attention backend: sage` in the logs at model load.
+  `attention backend: sage` in the logs at model load. The wheel is compiled
+  once with [scripts/build-sage-wheel.sh](scripts/build-sage-wheel.sh) and
+  hosted on a GitHub release (see the Dockerfile's `SAGE_WHEEL_URL`);
+  re-run + re-upload only when the base image's torch/CUDA changes.
 - **provision.sh pods**: set `NIDORA_BUILD_SAGE=1` to compile it at first
   boot (needs nvcc on the host image; takes 10–30 min once).
 - **Manual**: on a machine with nvcc:
