@@ -7,14 +7,14 @@ port 8000.
 
 ## Before you start
 
-- **GPU**: 48 GB+ (A6000/L40S/A40) is the comfortable floor for Wan 2.2 A14B
-  with `NIDORA_OFFLOAD=model`; 80 GB (A100/H100) runs with `OFFLOAD=none`;
-  24 GB (4090) requires `OFFLOAD=group` (streams weights through VRAM) and
-  runs noticeably slower.
-- **Disk**: ≥ 200 GB persistent volume. The Wan 2.2 A14B diffusers snapshot
-  is **126 GB** (the experts are stored in fp32: 57 GB each + 11 GB text
-  encoder), the Lightx2v LoRAs ~1.4 GB, plus download staging overhead —
-  plus FLUX (~35 GB) if you enable it.
+- **GPU**: the default profile runs Q6_K GGUF experts (~12 GB each), so a
+  24 GB card (4090) works well with `NIDORA_OFFLOAD=model` (one expert on GPU
+  at a time); 48 GB+ cards run `OFFLOAD=none`. Only the optional
+  full-precision `wan22-i2v-bf16` profile needs `group` offload on 24 GB.
+- **Disk**: ≥ 100 GB persistent volume. The default profile downloads ~37 GB
+  (2×12 GB GGUF experts + ~12 GB base components + ~2.5 GB LoRAs). The
+  optional bf16 profile adds the fp32 transformers (2×57 GB → plan 200 GB+),
+  and FLUX (~35 GB) if you enable it.
 - **HF_TOKEN**: only needed for gated repos (FLUX.1-dev is gated; the Wan and
   Lightx2v repos are not).
 - Put weights on the **persistent/network volume**, never the container disk —
@@ -123,11 +123,13 @@ curl -X POST http://<host>/v1/jobs -H 'content-type: application/json' -d '{
 
 Tuning per GPU class (env vars, set before `serve`):
 
-| GPU | Settings |
+| GPU | Settings (default GGUF profile) |
 |---|---|
-| H100/A100 80 GB | `NIDORA_OFFLOAD=none` |
-| A6000/L40S/A40 48 GB | `NIDORA_OFFLOAD=model` |
-| 4090/3090 24 GB | `NIDORA_OFFLOAD=group` (required — `model` OOMs: one 14B expert is ~28 GB bf16 > 24 GB), stick to 480p |
+| 48 GB+ (A6000/L40S/A100/H100) | `NIDORA_OFFLOAD=none` |
+| 4090/3090 24 GB | `NIDORA_OFFLOAD=model`, stick to 480p |
+
+For the optional full-precision `wan22-i2v-bf16` profile: 80 GB → `none`,
+48 GB → `model`, 24 GB → `group` (one 14B expert is ~28 GB bf16 > 24 GB).
 
 `NIDORA_ATTENTION=auto` uses SageAttention automatically when the `accel`
 extra is installed (provision.sh installs it whenever `nvidia-smi` is

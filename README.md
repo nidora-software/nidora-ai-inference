@@ -1,10 +1,10 @@
 # nidora-ai-inference
 
 Self-hosted AI inference API. Default pipeline: **image-to-video with Wan 2.2
-I2V A14B** (MoE high-noise + low-noise experts) accelerated by **Lightx2v
-distill LoRAs** (4-step inference) — built on [diffusers], with a small
-pipeline abstraction so other models, LoRAs, and modalities (text-to-image,
-…) are one class + one YAML profile away.
+I2V A14B** (MoE high-noise + low-noise experts) running **Q6_K GGUF-quantized
+experts** (~12 GB each) with **Lightning 4-step LoRAs** — built on
+[diffusers], with a small pipeline abstraction so other models, LoRAs, and
+modalities (text-to-image, …) are one class + one YAML profile away.
 
 - **Async job API** — `POST /v1/jobs` returns immediately; a single in-process
   GPU worker runs jobs sequentially; poll with `GET /v1/jobs/{id}`; cancel
@@ -32,22 +32,31 @@ curl -X POST localhost:8000/v1/jobs -H 'content-type: application/json' -d '{
     "image": "https://example.com/input.jpg",
     "prompt": "the woman smiles and waves at the camera",
     "resolution": "480p",
-    "num_frames": 81,
-    "frames_per_second": 16
+    "seed": 42
   }
 }'
 # -> {"id": "j_ab12cd34ef56", "state": "queued", ...}
 
 curl localhost:8000/v1/jobs/j_ab12cd34ef56
-# -> {"state": "completed", "artifacts": [{"url": "/v1/outputs/j_ab12cd34ef56/output.mp4", ...}]}
+# -> {"state": "completed", "artifacts": [{"url": "/v1/outputs/j_ab12cd34ef56/j_ab12cd34ef56.mp4", ...}]}
 ```
+
+Default generation settings (from the `wan22-i2v` profile): aspect-preserving
+sizing (input's longer side → 480/720, `fit: "fixed"` for exact 480×832),
+193 frames @ 19 fps, 4 euler steps, cfg 1, Lightning LoRA strengths 0.5
+(high-noise) / 1.0 (low-noise). Every value is overridable per job — see
+`GET /v1/pipelines` for the full schema, including `scheduler`,
+`boundary_ratio` (expert handoff), `crf`, and per-expert LoRA scales.
 
 Explore pipelines and their parameter schemas: `GET /v1/pipelines`.
 
 ## Models
 
-Weights are **never downloaded implicitly**. See [models/README.md](models/README.md)
-for the expected layout. Either place files manually, or:
+Weights are **never downloaded implicitly**. The default profile needs ~37 GB:
+Q6_K GGUF experts (2×12 GB), Lightning LoRAs (~2.5 GB), and the base snapshot's
+non-transformer components (~12 GB: text encoder, VAE, tokenizer, configs).
+See [models/README.md](models/README.md) for the expected layout. Either place
+files manually, or:
 
 ```bash
 uv run nidora-ai-inference download --all   # fetch everything the profiles need
@@ -73,13 +82,18 @@ All env vars are optional (prefix `NIDORA_`, see `.env.sample`):
 | `NIDORA_AUTO_DOWNLOAD` | `0` | `1` = download missing models at startup |
 | `NIDORA_API_KEY` | unset | when set, `/v1/*` requires `X-Api-Key: <key>` (or `Authorization: Bearer`); `/health` stays open. **Set this on any public deployment.** |
 
-### VRAM guidance (Wan 2.2 A14B i2v, bf16)
+### VRAM guidance (Wan 2.2 A14B i2v)
 
-| GPU | Required setting |
+Default profile (Q6_K GGUF experts, ~12 GB each):
+
+| GPU | Setting |
 |---|---|
-| 80 GB (A100/H100) | `NIDORA_OFFLOAD=none` |
-| 48 GB (A6000/L40S) | `NIDORA_OFFLOAD=model` — one expert on GPU at a time |
-| 24 GB (4090/3090) | `NIDORA_OFFLOAD=group` — a single 14B expert is ~28 GB in bf16 and does not fit; group offload streams it through VRAM in pieces. `model` mode will OOM. Needs 64 GB+ system RAM. |
+| 48 GB+ | `NIDORA_OFFLOAD=none` — both experts resident |
+| 24 GB (4090/3090) | `NIDORA_OFFLOAD=model` — one expert on GPU at a time |
+
+Full-precision `wan22-i2v-bf16` profile (~28 GB per expert): 80 GB cards run
+`none`, 48 GB cards run `model`, and 24 GB cards require `group` (streams
+weights through VRAM in pieces; needs 64 GB+ system RAM).
 
 ### SageAttention / Triton (optional acceleration)
 

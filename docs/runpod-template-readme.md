@@ -1,6 +1,6 @@
 # Nidora AI Inference — Wan 2.2 Image-to-Video
 
-Self-hosted async inference API serving **Wan 2.2 I2V A14B** (MoE high/low-noise experts) accelerated with **Lightx2v distill LoRAs** — 4-step video generation behind a clean REST API. Built on diffusers + FastAPI.
+Self-hosted async inference API serving **Wan 2.2 I2V A14B** (MoE high/low-noise experts) as **Q6_K GGUF quants** with **Lightning 4-step LoRAs** — fast video generation behind a clean REST API. Built on diffusers + FastAPI.
 
 - Image: `erenck/nidora-ai-inference:latest` (also on GHCR)
 - Source: https://github.com/nidora-software/nidora-ai-inference
@@ -14,15 +14,13 @@ Self-hosted async inference API serving **Wan 2.2 I2V A14B** (MoE high/low-noise
 
 | Resource | Minimum | Notes |
 |---|---|---|
-| GPU | 24 GB (RTX 4090) | 480p; requires `NIDORA_OFFLOAD=group` |
-| System RAM | 64 GB+ | both 14B experts park in RAM when offloading |
-| Volume | **200 GB** at `/workspace` | model snapshot alone is 126 GB |
+| GPU | 24 GB (RTX 4090) | `NIDORA_OFFLOAD=model` — one Q6_K expert (~12 GB) on GPU at a time |
+| System RAM | 48 GB+ | the idle expert parks in RAM |
+| Volume | **100 GB** at `/workspace` | ~37 GB of weights + outputs headroom |
 | Ports | HTTP 8000 | |
 
-On 24 GB cards only `NIDORA_OFFLOAD=group` works — one 14B expert (~28 GB bf16)
-exceeds VRAM, so it must be streamed in pieces. 48 GB cards (A6000/L40S) use
-`NIDORA_OFFLOAD=model` and run 720p comfortably; 80 GB cards set
-`NIDORA_OFFLOAD=none` for max speed.
+48 GB+ cards can set `NIDORA_OFFLOAD=none` (both experts resident) for max
+speed.
 
 ## Environment variables (as configured)
 
@@ -31,7 +29,7 @@ NIDORA_MODELS_DIR=/workspace/models      # weights on the persistent volume
 NIDORA_OUTPUTS_DIR=/workspace/outputs    # generated videos
 NIDORA_DB_PATH=/workspace/jobs.sqlite3   # job store
 NIDORA_AUTO_DOWNLOAD=1                   # fetch missing weights at startup
-NIDORA_OFFLOAD=group                     # required on 24 GB; "model" on 48 GB, "none" on 80 GB
+NIDORA_OFFLOAD=model                     # 24 GB cards; "none" on 48 GB+
 NIDORA_ATTENTION=auto                    # SageAttention if available, else SDPA
 NIDORA_API_KEY=<your-secret>             # REQUIRED: RunPod proxy URLs are public
 ```
@@ -41,7 +39,7 @@ All `/v1/*` calls must send the key: `-H "X-Api-Key: <your-secret>"`
 
 ## First boot
 
-The container starts, sees the empty volume, and downloads the Wan 2.2 snapshot (126 GB) + Lightx2v LoRAs from HuggingFace into `/workspace/models` — typically 15–30 min — then starts serving. Every later boot skips the download and serves in seconds. Watch progress in the container logs.
+The container starts, sees the empty volume, and downloads ~37 GB from HuggingFace into `/workspace/models` (Q6_K GGUF experts, base components, Lightning LoRAs) — typically 5–15 min — then starts serving. Every later boot skips the download and serves in seconds. Watch progress in the container logs.
 
 ## Usage
 
@@ -72,8 +70,8 @@ Poll status / get the video:
 
 ```
 curl https://<POD_ID>-8000.proxy.runpod.net/v1/jobs/<JOB_ID>
-# when state == "completed":
-curl -O https://<POD_ID>-8000.proxy.runpod.net/v1/outputs/<JOB_ID>/output.mp4
+# when state == "completed", download from artifacts[0].url:
+curl -O https://<POD_ID>-8000.proxy.runpod.net/v1/outputs/<JOB_ID>/<JOB_ID>.mp4
 ```
 
 Cancel: `DELETE /v1/jobs/<JOB_ID>`. List pipelines + full parameter schemas: `GET /v1/pipelines`.
@@ -86,14 +84,17 @@ Note: the **first job after a boot** also loads the model into RAM/VRAM (a few m
 |---|---|---|
 | `image` | — | URL, data URI, or base64 |
 | `prompt` | — | motion/scene description |
-| `resolution` | `480p` | `480p` (480×832) or `720p` (720×1280) |
-| `aspect_ratio` | `9:16` | or `16:9` |
-| `num_frames` | 81 | ~5 s at 16 fps |
-| `frames_per_second` | 16 | |
-| `num_inference_steps` | 4 | Lightx2v distilled |
+| `resolution` | `480p` | target size: longer side 480 / 720 |
+| `fit` | `preserve` | keep input aspect ratio; `fixed` = exact 480×832 (`aspect_ratio` 9:16/16:9) |
+| `num_frames` | 193 | ~10 s at 19 fps |
+| `frames_per_second` | 19 | |
+| `num_inference_steps` | 4 | Lightning distilled |
+| `scheduler` | `euler` | or `unipc` |
 | `guidance_scale` / `_2` | 1.0 | per-expert CFG |
 | `sample_shift` | 5.0 | scheduler flow shift |
-| `lora_scale_transformer` / `_2` | 1.0 | per-expert LoRA strength |
+| `boundary_ratio` | model config | expert handoff point (0–1) |
+| `lora_scale_transformer` / `_2` | 0.5 / 1.0 | per-expert LoRA strength (profile defaults) |
+| `crf` | 9 | mp4 quality (lower = better) |
 | `seed` | random | set for reproducibility |
 
 ## Tips
