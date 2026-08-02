@@ -39,27 +39,42 @@ install_cached_wheel() {
 }
 
 build_sage() { # $1 = wheel cache dir for this GPU arch
+    mkdir -p "$1"
+    local blog="$1/build.log" # persisted on the volume for post-mortems
+    : >"$blog"
+    if ! command -v g++ >/dev/null 2>&1; then
+        log "installing g++ (one-time)..."
+        { apt-get update -qq && apt-get install -y -qq --no-install-recommends g++; } \
+            >>"$blog" 2>&1 || { log "g++ install failed — see $blog"; return 1; }
+    fi
     if ! command -v nvcc >/dev/null 2>&1; then
         log "installing CUDA compiler (conda cuda-nvcc, one-time, ~2 min)..."
-        conda install -y -q -c nvidia cuda-nvcc=12.9 cuda-cudart-dev=12.9 cuda-cccl >/dev/null
+        conda install -y -q -c nvidia cuda-nvcc=12.9 cuda-cudart-dev=12.9 cuda-cccl \
+            >>"$blog" 2>&1 || { log "cuda-nvcc install failed — see $blog"; return 1; }
     fi
     local src
     src=$(mktemp -d)
     log "fetching SageAttention ${SAGE_REF}..."
     curl -LsSf "https://github.com/thu-ml/SageAttention/archive/refs/tags/${SAGE_REF}.tar.gz" \
-        | tar xz -C "$src" --strip-components=1
-    pip install --no-cache-dir --quiet ninja packaging wheel
+        | tar xz -C "$src" --strip-components=1 || { log "fetch failed"; return 1; }
+    pip install --no-cache-dir --quiet ninja packaging wheel >>"$blog" 2>&1
     # No TORCH_CUDA_ARCH_LIST: setup.py detects the local GPU and compiles
     # only its arch — ~5x less work than a fat multi-arch wheel. Low default
     # parallelism: the build overlaps the model load's ~40 GB RAM footprint.
     local jobs="${NIDORA_SAGE_MAX_JOBS:-2}"
-    log "compiling SageAttention for this GPU (MAX_JOBS=$jobs, ~5-20 min)..."
-    (cd "$src" && MAX_JOBS="$jobs" python setup.py bdist_wheel >/dev/null)
-    mkdir -p "$1"
-    cp "$src"/dist/sageattention-*.whl "$1"/
-    pip install --no-cache-dir --quiet "$1"/sageattention-*.whl
+    log "compiling SageAttention for this GPU (MAX_JOBS=$jobs, ~5-20 min; log: $blog)..."
+    (cd "$src" && MAX_JOBS="$jobs" python setup.py bdist_wheel) >>"$blog" 2>&1 || {
+        log "compile FAILED — tail of $blog:"
+        tail -40 "$blog"
+        return 1
+    }
+    local wheel
+    wheel=$(ls "$src"/dist/sageattention-*.whl 2>/dev/null | head -1)
+    [ -n "$wheel" ] || { log "compile produced no wheel — see $blog"; return 1; }
+    cp "$wheel" "$1"/ || return 1
+    pip install --no-cache-dir --quiet "$1/$(basename "$wheel")" || return 1
     rm -rf "$src"
-    log "SageAttention built and cached in $1"
+    log "SageAttention built and cached: $1/$(basename "$wheel")"
 }
 
 reload_pipeline() {
