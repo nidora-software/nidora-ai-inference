@@ -15,9 +15,9 @@ RUN git clone --depth 1 --branch ${SAGEATTENTION_REF} \
     https://github.com/thu-ml/SageAttention.git /opt/sageattention
 WORKDIR /opt/sageattention
 ENV TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}
-# Parallelism sized for a 4-vCPU/16 GB CI runner — nvcc is memory-hungry.
-RUN EXT_PARALLEL=2 NVCC_APPEND_FLAGS="--threads 2" MAX_JOBS=4 \
-    python setup.py bdist_wheel
+# Parallelism sized for a 4-vCPU/16 GB CI runner — a single nvcc unit on
+# these templated kernels can eat several GB, so keep concurrency at 2.
+RUN MAX_JOBS=2 python setup.py bdist_wheel
 
 # ---- Runtime image ----------------------------------------------------------
 # CUDA runtime image with torch preinstalled. Weights are NOT baked in —

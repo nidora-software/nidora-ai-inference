@@ -14,10 +14,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # The CUDA/pytorch base image is large; reclaim runner disk first.
+      # The CUDA devel + runtime base images are huge; reclaim every GB the
+      # runner has (dotnet/android/toolcache/etc. ≈ 30+ GB).
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache /usr/local/share/boost /usr/share/swift \
+            /usr/local/lib/node_modules /opt/microsoft /usr/local/.ghcup
+          sudo docker image prune -af
           df -h /
 
       - uses: actions/checkout@v4
