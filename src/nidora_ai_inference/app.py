@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import secrets
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from . import __version__
 from .api.routes import router
@@ -14,6 +16,16 @@ from .core.jobs import JobStore
 from .core.worker import GpuWorker
 
 log = logging.getLogger("nidora")
+
+
+def _request_key(request: Request) -> str:
+    key = request.headers.get("x-api-key")
+    if key:
+        return key
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth[7:]
+    return ""
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -50,4 +62,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="nidora-ai-inference", version=__version__, lifespan=lifespan)
     app.include_router(router)
+
+    if settings.api_key:
+
+        @app.middleware("http")
+        async def require_api_key(request: Request, call_next):
+            if request.url.path.startswith("/v1/") and not secrets.compare_digest(
+                _request_key(request), settings.api_key
+            ):
+                return JSONResponse({"detail": "invalid or missing API key"}, status_code=401)
+            return await call_next(request)
+
+    else:
+        log.warning("NIDORA_API_KEY not set — the API is unauthenticated")
+
     return app

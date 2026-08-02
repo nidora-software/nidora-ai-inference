@@ -28,6 +28,10 @@ class Settings(BaseSettings):
 
     auto_download: bool = False
 
+    # When set, all /v1/* endpoints require this key via the X-Api-Key header
+    # (or Authorization: Bearer). /health stays open for load balancers.
+    api_key: str | None = None
+
     host: str = "0.0.0.0"
     port: int = 8000
 

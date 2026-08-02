@@ -99,6 +99,9 @@ def health(request: Request) -> HealthResponse:
     return HealthResponse(
         status="ok",
         device=state.settings.resolve_device(),
+        offload=state.settings.offload,
+        attention=state.settings.attention,
+        dtype=state.settings.dtype,
         loaded_pipeline=state.worker.loaded_pipeline,
         queue_depth=state.store.queue_depth(),
     )

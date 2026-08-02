@@ -56,5 +56,8 @@ class PipelineInfo(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     device: str
+    offload: str
+    attention: str
+    dtype: str
     loaded_pipeline: str | None
     queue_depth: int

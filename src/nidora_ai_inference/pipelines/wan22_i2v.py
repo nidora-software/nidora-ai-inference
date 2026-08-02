@@ -119,6 +119,7 @@ class Wan22I2VPipeline(Pipeline):
 
         device = self.settings.resolve_device()
         offload = self.settings.offload
+        log.info("device=%s offload=%s dtype=%s", device, offload, self.settings.dtype)
         if device != "cuda":
             pipe.to(device)
         elif offload == "model":

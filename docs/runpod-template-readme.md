@@ -31,9 +31,13 @@ NIDORA_MODELS_DIR=/workspace/models      # weights on the persistent volume
 NIDORA_OUTPUTS_DIR=/workspace/outputs    # generated videos
 NIDORA_DB_PATH=/workspace/jobs.sqlite3   # job store
 NIDORA_AUTO_DOWNLOAD=1                   # fetch missing weights at startup
-NIDORA_OFFLOAD=model                     # CPU offload (24 GB GPUs); "none" on 80 GB
+NIDORA_OFFLOAD=group                     # required on 24 GB; "model" on 48 GB, "none" on 80 GB
 NIDORA_ATTENTION=auto                    # SageAttention if available, else SDPA
+NIDORA_API_KEY=<your-secret>             # REQUIRED: RunPod proxy URLs are public
 ```
+
+All `/v1/*` calls must send the key: `-H "X-Api-Key: <your-secret>"`
+(or `Authorization: Bearer <your-secret>`). `/health` stays open.
 
 ## First boot
 

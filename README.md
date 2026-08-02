@@ -71,6 +71,7 @@ All env vars are optional (prefix `NIDORA_`, see `.env.sample`):
 | `NIDORA_OFFLOAD` | `none` | `none` / `model` / `sequential` / `group` |
 | `NIDORA_ATTENTION` | `auto` | `auto` / `sdpa` / `sage` / `flash` |
 | `NIDORA_AUTO_DOWNLOAD` | `0` | `1` = download missing models at startup |
+| `NIDORA_API_KEY` | unset | when set, `/v1/*` requires `X-Api-Key: <key>` (or `Authorization: Bearer`); `/health` stays open. **Set this on any public deployment.** |
 
 ### VRAM guidance (Wan 2.2 A14B i2v, bf16)
 
