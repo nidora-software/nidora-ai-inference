@@ -25,6 +25,7 @@ class MockParams(BaseModel):
     height: int = Field(64, ge=16, le=512)
     delay_s: float = Field(0.0, ge=0.0, le=60.0)  # per-frame delay, for cancel tests
     fail: bool = False
+    seed: int | None = None  # unused by the renderer; exercises seed echo-back
 
 
 @register

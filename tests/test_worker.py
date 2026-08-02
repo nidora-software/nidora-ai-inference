@@ -45,6 +45,31 @@ def test_happy_path(settings):
         worker.stop()
 
 
+def test_random_seed_written_back(settings):
+    store, worker = make_worker(settings)
+    worker.start()
+    try:
+        job = store.create("mock", {})
+        worker.submit(job.id)
+        wait_state(store, job.id, {JobState.COMPLETED})
+        stored = store.get(job.id)
+        assert isinstance(stored.params.get("seed"), int)
+    finally:
+        worker.stop()
+
+
+def test_explicit_seed_preserved(settings):
+    store, worker = make_worker(settings)
+    worker.start()
+    try:
+        job = store.create("mock", {"seed": 7})
+        worker.submit(job.id)
+        wait_state(store, job.id, {JobState.COMPLETED})
+        assert store.get(job.id).params["seed"] == 7
+    finally:
+        worker.stop()
+
+
 def test_unknown_profile_fails_job(settings):
     store, worker = make_worker(settings)
     worker.start()

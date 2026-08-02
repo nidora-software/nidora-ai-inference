@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import secrets
 import threading
 
 from ..outputs.storage import artifact_records, job_output_dir
@@ -99,6 +100,12 @@ class GpuWorker:
         try:
             pipeline = self._ensure_pipeline(job.pipeline)
             params = pipeline.validate_params(job.params)
+            # Materialize a random seed so every generation is reproducible:
+            # the effective seed is written back into the job's stored params.
+            if getattr(params, "seed", ...) is None:
+                seed = secrets.randbits(31)
+                params = params.model_copy(update={"seed": seed})
+                self.store.update_params(job_id, {**job.params, "seed": seed})
             ctx = JobContext(
                 job_id=job_id,
                 cancel_event=cancel_event,

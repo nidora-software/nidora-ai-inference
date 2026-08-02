@@ -141,6 +141,13 @@ class JobStore:
             self._conn.commit()
         return cur.rowcount > 0
 
+    def update_params(self, job_id: str, params: dict[str, Any]) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE jobs SET params = ? WHERE id = ?", (json.dumps(params), job_id)
+            )
+            self._conn.commit()
+
     def set_progress(self, job_id: str, progress: float) -> None:
         with self._lock:
             self._conn.execute(
