@@ -28,10 +28,9 @@ class Settings(BaseSettings):
 
     auto_download: bool = False
 
-    # Pipeline profile to load at startup so the first job doesn't pay the
-    # model-load cost. "auto" = the first profile in pipelines.yaml (the
-    # default pipeline), "none" = skip, or an explicit profile name.
-    warmup: str = "auto"
+    # Pipeline profile to load at startup (NIDORA_WARMUP=wan22-i2v) so the
+    # first job doesn't pay the model-load cost. Unset = no warmup.
+    warmup: str | None = None
 
     # When set, all /v1/* endpoints require this key via the X-Api-Key header
     # (or Authorization: Bearer). /health stays open for load balancers.

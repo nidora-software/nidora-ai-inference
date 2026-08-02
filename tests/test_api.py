@@ -22,16 +22,26 @@ def test_health(client):
     assert "activity" in body
 
 
-def test_auto_warmup_on_startup(client):
-    # NIDORA_WARMUP defaults to "auto": the first profile loads at boot.
+def test_warmup_env_loads_pipeline_at_startup(settings):
     import time
 
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        if client.get("/health").json()["loaded_pipeline"] == "mock":
-            break
-        time.sleep(0.02)
-    assert client.get("/health").json()["loaded_pipeline"] == "mock"
+    from fastapi.testclient import TestClient
+
+    from nidora_ai_inference.app import create_app
+
+    settings.warmup = "mock"
+    with TestClient(create_app(settings)) as c:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if c.get("/health").json()["loaded_pipeline"] == "mock":
+                break
+            time.sleep(0.02)
+        assert c.get("/health").json()["loaded_pipeline"] == "mock"
+
+
+def test_no_warmup_by_default(client):
+    # Without NIDORA_WARMUP nothing loads at boot.
+    assert client.get("/health").json()["loaded_pipeline"] is None
 
 
 def test_pipeline_load_and_unload(client):

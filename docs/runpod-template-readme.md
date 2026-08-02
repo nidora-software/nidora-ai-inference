@@ -76,7 +76,7 @@ curl -O https://<POD_ID>-8000.proxy.runpod.net/v1/outputs/<JOB_ID>/<JOB_ID>.mp4
 
 Cancel: `DELETE /v1/jobs/<JOB_ID>`. List pipelines + full parameter schemas: `GET /v1/pipelines`.
 
-Note: the default pipeline is **warmed up automatically at boot** (`NIDORA_WARMUP=auto`; set a profile name or `none` to change that) — watch `GET /health` for `loaded_pipeline`. You can also load/unload explicitly with `POST /v1/pipelines/<NAME>/load` and `POST /v1/pipelines/<NAME>/unload`.
+Note: set `NIDORA_WARMUP=wan22-i2v` on the template to **load the model at boot** instead of on the first job — watch `GET /health` for `loaded_pipeline`. You can also load/unload explicitly with `POST /v1/pipelines/<NAME>/load` and `POST /v1/pipelines/<NAME>/unload`.
 
 ## Key parameters (wan22-i2v)
 
