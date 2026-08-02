@@ -4,6 +4,10 @@ FROM pytorch/pytorch:2.8.0-cuda12.9-cudnn9-runtime
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+# curl: used by the entrypoint (SageAttention tarball, API self-calls).
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 # cloudflared for optional HTTPS via Cloudflare Tunnel (set
 # NIDORA_CF_TUNNEL_TOKEN to activate). "latest" keeps the client current;
 # the tunnel protocol is stable.

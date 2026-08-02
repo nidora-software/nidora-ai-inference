@@ -82,6 +82,12 @@ within a few minutes. Track it via `GET /health`: `activity` goes
 `downloading` → `loading:wan22-i2v` → `idle`; ready when
 `"loaded_pipeline": "wan22-i2v"`.
 
+**SageAttention** provisions itself in parallel: first boot on a volume/GPU
+combo compiles it for that GPU (~5–20 min, background), caches the wheel on
+the volume, and hot-reloads the pipeline — jobs run on sdpa until then,
+then speed up. Later boots install the cached wheel in seconds. Look for
+`attention backend: sage` in the logs; `NIDORA_BUILD_SAGE=0` disables.
+
 ## Usage
 
 Find the mapped public port on the instance card (the IP/port button —
