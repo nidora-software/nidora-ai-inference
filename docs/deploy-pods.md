@@ -64,12 +64,43 @@ bash -c "sleep 2; bash /workspace/nidora-ai-inference/scripts/provision.sh"
 
 ## Vast.ai
 
+### Option A — custom Docker image (recommended)
+
+Create a Vast template from the prebuilt image — full walkthrough (env vars,
+API key, first boot, usage) in
+[vastai-template-readme.md](vastai-template-readme.md). In short:
+
+1. **Image**: `erenck/nidora-ai-inference:latest` (Docker Hub) or
+   `ghcr.io/nidora-software/nidora-ai-inference:latest`. Launch mode: run the
+   image's entrypoint — the default command *is* `serve`.
+2. **Disk**: 100 GB+. **Docker options**:
+   ```
+   -p 8000:8000
+   -e NIDORA_AUTO_DOWNLOAD=1
+   -e NIDORA_WARMUP=wan22-i2v
+   -e NIDORA_OFFLOAD=model        # 24 GB cards; "none" on 48 GB+
+   -e NIDORA_API_KEY=<secret>     # REQUIRED — Vast instances are public
+   ```
+3. Find the mapped public port on the instance card (Vast maps container
+   port 8000 to a random host port) and verify:
+   ```bash
+   curl http://<PUBLIC_IP>:<MAPPED_PORT>/health
+   # ready when "loaded_pipeline": "wan22-i2v"
+   ```
+
+Weights land on the instance disk (`/models`) — **stop** instances instead of
+destroying them to keep the download.
+
+### Option B — stock PyTorch template + provision.sh
+
 1. Create an instance from the **PyTorch (CUDA 12.x)** template. Pick an
-   offer with ≥ 200 GB disk. Under **Docker options**, add `-p 8000:8000`
+   offer with ≥ 100 GB disk. Under **Docker options**, add `-p 8000:8000`
    and env vars:
    ```
    -e NIDORA_REPO=https://github.com/nidora-software/nidora-ai-inference.git
-   -e HF_TOKEN=hf_...
+   -e NIDORA_WARMUP=wan22-i2v
+   -e NIDORA_API_KEY=<secret>
+   -e HF_TOKEN=hf_...             # only if you enable gated models
    ```
 2. Set the **On-start script** to:
    ```bash
@@ -79,15 +110,7 @@ bash -c "sleep 2; bash /workspace/nidora-ai-inference/scripts/provision.sh"
    ```
    (On templates without a `/workspace` volume, point both vars at whatever
    persistent path the offer provides.)
-3. Find the mapped public port on the instance card (Vast maps container
-   port 8000 to a random host port) and verify:
-   ```bash
-   curl http://<PUBLIC_IP>:<MAPPED_PORT>/health
-   ```
-
-Vast also accepts custom Docker images directly — paste the
-`ghcr.io/...` image name into the template's image field, expose 8000, set
-`NIDORA_AUTO_DOWNLOAD=1`, and skip the on-start script entirely.
+3. Verify via the mapped public port as above.
 
 ## Any other provider (Lambda, Paperspace, a bare server…)
 

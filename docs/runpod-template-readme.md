@@ -29,6 +29,7 @@ NIDORA_MODELS_DIR=/workspace/models      # weights on the persistent volume
 NIDORA_OUTPUTS_DIR=/workspace/outputs    # generated videos
 NIDORA_DB_PATH=/workspace/jobs.sqlite3   # job store
 NIDORA_AUTO_DOWNLOAD=1                   # fetch missing weights at startup
+NIDORA_WARMUP=wan22-i2v                  # load the model at boot, not on the first job
 NIDORA_OFFLOAD=model                     # 24 GB cards; "none" on 48 GB+
 NIDORA_ATTENTION=auto                    # SageAttention if available, else SDPA
 NIDORA_API_KEY=<your-secret>             # REQUIRED: RunPod proxy URLs are public
@@ -39,7 +40,7 @@ All `/v1/*` calls must send the key: `-H "X-Api-Key: <your-secret>"`
 
 ## First boot
 
-The container starts, sees the empty volume, and downloads ~37 GB from HuggingFace into `/workspace/models` (Q6_K GGUF experts, base components, Lightning LoRAs) — typically 5–15 min — then starts serving. Every later boot skips the download and serves in seconds. Watch progress in the container logs.
+The container starts, sees the empty volume, and downloads ~37 GB from HuggingFace into `/workspace/models` (Q6_K GGUF experts, base components, Lightning LoRAs) — typically 5–15 min — then starts serving and warms the model into RAM/VRAM (`NIDORA_WARMUP=wan22-i2v`). Every later boot skips the download and is generating-ready within a few minutes. Watch progress in the container logs; readiness = `GET /health` shows `"loaded_pipeline": "wan22-i2v"`.
 
 ## Usage
 
@@ -76,7 +77,7 @@ curl -O https://<POD_ID>-8000.proxy.runpod.net/v1/outputs/<JOB_ID>/<JOB_ID>.mp4
 
 Cancel: `DELETE /v1/jobs/<JOB_ID>`. List pipelines + full parameter schemas: `GET /v1/pipelines`.
 
-Note: set `NIDORA_WARMUP=wan22-i2v` on the template to **load the model at boot** instead of on the first job — watch `GET /health` for `loaded_pipeline`. You can also load/unload explicitly with `POST /v1/pipelines/<NAME>/load` and `POST /v1/pipelines/<NAME>/unload`.
+Note: the template sets `NIDORA_WARMUP=wan22-i2v`, so the model **loads at boot** instead of on the first job — watch `GET /health` for `loaded_pipeline`. You can also load/unload explicitly with `POST /v1/pipelines/<NAME>/load` and `POST /v1/pipelines/<NAME>/unload`.
 
 ## Key parameters (wan22-i2v)
 
