@@ -39,7 +39,7 @@ def test_happy_path(settings):
         done = wait_state(store, job.id, {JobState.COMPLETED, JobState.FAILED})
         assert done.state == JobState.COMPLETED
         assert done.artifacts and done.artifacts[0]["media_type"] == "video/mp4"
-        assert (settings.outputs_dir / job.id / "output.mp4").is_file()
+        assert (settings.outputs_dir / job.id / f"{job.id}.mp4").is_file()
         assert worker.loaded_pipeline == "mock"
     finally:
         worker.stop()

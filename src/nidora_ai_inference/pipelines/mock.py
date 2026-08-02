@@ -52,5 +52,5 @@ class MockPipeline(Pipeline):
             frames.append(frame)
             ctx.report_progress(i + 1, params.num_frames)
 
-        path = write_mp4(frames, ctx.output_dir / "output.mp4", fps=params.frames_per_second)
+        path = write_mp4(frames, ctx.output_dir / f"{ctx.job_id}.mp4", fps=params.frames_per_second)
         return [Artifact(path=path, media_type="video/mp4")]

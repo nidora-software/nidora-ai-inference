@@ -1,34 +1,61 @@
 # Pipeline profiles — the flexibility layer.
 #
-# A profile binds a pipeline *kind* (Python class) to a model, optional LoRAs,
-# and default params. The API exposes profiles as pipeline ids; several
-# profiles can share one class (same code, different model/LoRAs/defaults).
+# A profile binds a pipeline *kind* (Python class) to a model, optional GGUF
+# transformer replacements, optional LoRAs (with per-LoRA strength), and
+# default params. The API exposes profiles as pipeline ids; several profiles
+# can share one class (same code, different model/LoRAs/defaults).
 
 pipelines:
+  # Matches the production ComfyUI template: Q6_K GGUF experts, Lightning
+  # 4-step LoRAs (high 0.5 / low 1.0), euler scheduler, aspect-preserving
+  # sizing, 193 frames @ 19 fps, crf 9.
   wan22-i2v:
     kind: wan22_i2v
     model: wan22-i2v-a14b
-    loras:
+    gguf:
       transformer: # high-noise expert
-        model: lightx2v-distill
-        weight_name: "wan2.2_i2v_A14b_high_noise_lora_rank64_lightx2v_4step_1022.safetensors"
+        model: wan22-i2v-gguf
+        weight_name: "HighNoise/Wan2.2-I2V-A14B-HighNoise-Q6_K.gguf"
       transformer_2: # low-noise expert
-        model: lightx2v-distill
-        weight_name: "wan2.2_i2v_A14b_low_noise_lora_rank64_lightx2v_4step_1022.safetensors"
+        model: wan22-i2v-gguf
+        weight_name: "LowNoise/Wan2.2-I2V-A14B-LowNoise-Q6_K.gguf"
+    loras:
+      transformer:
+        model: wan22-lightning
+        weight_name: "Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/high_noise_model.safetensors"
+        strength: 0.5
+      transformer_2:
+        model: wan22-lightning
+        weight_name: "Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/low_noise_model.safetensors"
+        strength: 1.0
     defaults:
+      scheduler: euler
       num_inference_steps: 4
       guidance_scale: 1.0
       guidance_scale_2: 1.0
       sample_shift: 5.0
+      fit: preserve
+      num_frames: 193
+      frames_per_second: 19
+      crf: 9
 
-  # Same class, no distill LoRAs — full-quality slow path. Enable if needed.
-  # wan22-i2v-full:
+  # Full-precision variant on the official fp32 snapshot with the lightx2v
+  # distill LoRAs — needs the complete 126 GB download (remove the
+  # ignore_patterns on wan22-i2v-a14b) and NIDORA_OFFLOAD=group on 24 GB.
+  # wan22-i2v-bf16:
   #   kind: wan22_i2v
   #   model: wan22-i2v-a14b
+  #   loras:
+  #     transformer:
+  #       model: lightx2v-distill
+  #       weight_name: "wan2.2_i2v_A14b_high_noise_lora_rank64_lightx2v_4step_1022.safetensors"
+  #     transformer_2:
+  #       model: lightx2v-distill
+  #       weight_name: "wan2.2_i2v_A14b_low_noise_lora_rank64_lightx2v_4step_1022.safetensors"
   #   defaults:
-  #     num_inference_steps: 40
-  #     guidance_scale: 3.5
-  #     guidance_scale_2: 3.5
+  #     num_inference_steps: 4
+  #     guidance_scale: 1.0
+  #     guidance_scale_2: 1.0
   #     sample_shift: 5.0
 
   # FLUX.1-dev is gated on HuggingFace — accept the license and set HF_TOKEN,

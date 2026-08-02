@@ -1,4 +1,5 @@
-"""CPU-safe tests for the Wan 2.2 pipeline's param model and image decoding."""
+"""CPU-safe tests for the Wan 2.2 pipeline's param model, sizing, and image
+decoding."""
 
 from __future__ import annotations
 
@@ -7,26 +8,54 @@ import io
 
 from PIL import Image
 
-from nidora_ai_inference.pipelines.wan22_i2v import Wan22I2VParams, fetch_image
+from nidora_ai_inference.pipelines.wan22_i2v import (
+    Wan22I2VParams,
+    compute_size,
+    fetch_image,
+)
 
 BASE = {"image": "aGk=", "prompt": "test"}
 
 
-def test_defaults_match_production_conventions():
+def test_defaults():
     p = Wan22I2VParams(**BASE)
     assert p.num_frames == 81
     assert p.frames_per_second == 16
     assert p.num_inference_steps == 4
     assert p.guidance_scale == 1.0
     assert p.resolution == "480p"
-    assert p.aspect_ratio == "9:16"
+    assert p.fit == "preserve"
+    assert p.scheduler == "euler"
+    assert p.lora_scale_transformer is None  # None -> profile strength
+    assert p.boundary_ratio is None
 
 
-def test_resolution_mapping():
-    assert Wan22I2VParams(**BASE).size() == (832, 480)
-    assert Wan22I2VParams(**BASE, resolution="720p").size() == (1280, 720)
-    assert Wan22I2VParams(**BASE, aspect_ratio="16:9").size() == (480, 832)
-    assert Wan22I2VParams(**BASE, resolution="720p", aspect_ratio="16:9").size() == (720, 1280)
+def test_fixed_size_mapping():
+    assert compute_size((100, 100), "480p", "fixed", "9:16") == (832, 480)
+    assert compute_size((100, 100), "720p", "fixed", "9:16") == (1280, 720)
+    assert compute_size((100, 100), "480p", "fixed", "16:9") == (480, 832)
+    assert compute_size((100, 100), "720p", "fixed", "16:9") == (720, 1280)
+
+
+def test_preserve_size_scales_longer_side():
+    # Portrait 9:16 input: height is the longer side -> 480.
+    h, w = compute_size((1080, 1920), "480p", "preserve", "9:16")
+    assert h == 480
+    assert w == 272  # 270 snapped to /16
+    # Landscape input: width is the longer side.
+    h, w = compute_size((1920, 1080), "480p", "preserve", "9:16")
+    assert (h, w) == (272, 480)
+    # 720p target.
+    h, w = compute_size((1080, 1920), "720p", "preserve", "9:16")
+    assert h == 720
+    assert w % 16 == 0
+
+
+def test_preserve_size_multiples_of_16():
+    for size in [(123, 457), (999, 501), (33, 1001)]:
+        h, w = compute_size(size, "480p", "preserve", "9:16")
+        assert h % 16 == 0 and w % 16 == 0
+        assert h >= 16 and w >= 16
 
 
 def _png_b64() -> str:
@@ -52,5 +81,12 @@ def test_pipeline_registers_lazily():
     cls = resolve_pipeline_class("wan22_i2v")
     assert cls.kind == "wan22_i2v"
     schema = cls.params_schema()
-    assert "lora_scale_transformer" in schema["properties"]
-    assert "lora_scale_transformer_2" in schema["properties"]
+    for key in (
+        "lora_scale_transformer",
+        "lora_scale_transformer_2",
+        "scheduler",
+        "boundary_ratio",
+        "fit",
+        "crf",
+    ):
+        assert key in schema["properties"]

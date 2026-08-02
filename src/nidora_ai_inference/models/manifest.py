@@ -78,9 +78,9 @@ def models_for_profiles(profiles: dict[str, PipelineProfile]) -> list[str]:
     for profile in profiles.values():
         if profile.model and profile.model not in names:
             names.append(profile.model)
-        for lora in profile.loras.values():
-            if lora.model not in names:
-                names.append(lora.model)
+        for ref in [*profile.gguf.values(), *profile.loras.values()]:
+            if ref.model not in names:
+                names.append(ref.model)
     return names
 
 
@@ -101,6 +101,7 @@ def download_models(
             repo_id=entry.source,
             revision=entry.revision,
             allow_patterns=entry.allow_patterns,
+            ignore_patterns=entry.ignore_patterns,
             local_dir=dest,
             token=os.environ.get("HF_TOKEN") or None,
         )

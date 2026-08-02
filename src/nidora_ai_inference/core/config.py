@@ -52,13 +52,20 @@ class ModelEntry(BaseModel):
     source: str
     revision: str | None = None
     allow_patterns: list[str] | None = None
+    ignore_patterns: list[str] | None = None
 
 
-class LoraRef(BaseModel):
-    """A LoRA reference inside a pipeline profile."""
+class FileRef(BaseModel):
+    """A reference to a file inside a ModelEntry."""
 
     model: str  # name of a ModelEntry
     weight_name: str | None = None
+
+
+class LoraRef(FileRef):
+    """A LoRA reference inside a pipeline profile."""
+
+    strength: float = 1.0
 
 
 class PipelineProfile(BaseModel):
@@ -67,6 +74,7 @@ class PipelineProfile(BaseModel):
     name: str
     kind: str
     model: str | None = None  # name of a ModelEntry
+    gguf: dict[str, FileRef] = Field(default_factory=dict)  # target -> GGUF file
     loras: dict[str, LoraRef] = Field(default_factory=dict)  # target -> LoRA
     defaults: dict[str, Any] = Field(default_factory=dict)
 

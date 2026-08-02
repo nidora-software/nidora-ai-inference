@@ -91,5 +91,5 @@ class FluxT2IPipeline(Pipeline):
             generator=generator,
             callback_on_step_end=on_step_end,
         )
-        path = write_image(result.images[0], ctx.output_dir / "output.png")
+        path = write_image(result.images[0], ctx.output_dir / f"{ctx.job_id}.png")
         return [Artifact(path=path, media_type="image/png")]

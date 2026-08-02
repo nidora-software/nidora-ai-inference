@@ -1,9 +1,9 @@
 """Wan 2.2 image-to-video (A14B MoE: high-noise + low-noise experts).
 
-Default profile pairs the base model with Lightx2v distill LoRAs for 4-step
-inference: the high-noise LoRA loads into `transformer`, the low-noise one
-into `transformer_2`. Param names follow the conventions of popular hosted
-wan-2.2 i2v APIs so existing integrations swap in with minimal changes.
+Default profile mirrors the production ComfyUI template: Q6_K GGUF-quantized
+experts, Lightning 4-step LoRAs (high-noise @ 0.5, low-noise @ 1.0), euler
+scheduler, aspect-preserving sizing, cfg 1. The same class also runs the
+full-precision diffusers snapshot when a profile omits the `gguf` section.
 """
 
 from __future__ import annotations
@@ -24,11 +24,15 @@ from .base import Artifact, JobContext, Pipeline, register
 
 log = logging.getLogger("nidora.wan22_i2v")
 
-# Portrait (9:16); swapped for 16:9.
-RESOLUTIONS: dict[str, tuple[int, int]] = {
-    "480p": (832, 480),  # (height, width) for 9:16
+# Fixed-size mode: (height, width) for portrait 9:16; swapped for 16:9.
+FIXED_RESOLUTIONS: dict[str, tuple[int, int]] = {
+    "480p": (832, 480),
     "720p": (1280, 720),
 }
+
+# Preserve mode: the input image keeps its aspect ratio; its longer side is
+# scaled to this many pixels (matches the ComfyUI template's resize node).
+LONG_SIDE: dict[str, int] = {"480p": 480, "720p": 720}
 
 DEFAULT_NEGATIVE_PROMPT = (
     "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，"
@@ -43,22 +47,46 @@ class Wan22I2VParams(BaseModel):
     prompt: str
     negative_prompt: str = DEFAULT_NEGATIVE_PROMPT
     resolution: Literal["480p", "720p"] = "480p"
-    aspect_ratio: Literal["9:16", "16:9"] = "9:16"
-    num_frames: int = Field(81, ge=17, le=161)
+    # "preserve": keep the input image's aspect ratio, longer side = 480/720.
+    # "fixed": exact 480×832 / 720×1280 per aspect_ratio.
+    fit: Literal["preserve", "fixed"] = "preserve"
+    aspect_ratio: Literal["9:16", "16:9"] = "9:16"  # fixed mode only
+    num_frames: int = Field(81, ge=17, le=241)
     frames_per_second: int = Field(16, ge=8, le=30)
     num_inference_steps: int = Field(4, ge=1, le=50)
     guidance_scale: float = Field(1.0, ge=0.0, le=20.0)  # high-noise expert CFG
     guidance_scale_2: float = Field(1.0, ge=0.0, le=20.0)  # low-noise expert CFG
     sample_shift: float = Field(5.0, ge=1.0, le=20.0)
-    lora_scale_transformer: float = Field(1.0, ge=0.0, le=2.0)  # high-noise LoRA
-    lora_scale_transformer_2: float = Field(1.0, ge=0.0, le=2.0)  # low-noise LoRA
+    scheduler: Literal["euler", "unipc"] = "euler"
+    # Expert handoff point (fraction of the diffusion schedule handled by the
+    # high-noise expert). None = the model's own config value.
+    boundary_ratio: float | None = Field(None, ge=0.0, le=1.0)
+    # None = the profile's per-LoRA strength (template: high 0.5, low 1.0).
+    lora_scale_transformer: float | None = Field(None, ge=0.0, le=2.0)
+    lora_scale_transformer_2: float | None = Field(None, ge=0.0, le=2.0)
+    crf: int = Field(18, ge=1, le=51)
     seed: int | None = None
 
-    def size(self) -> tuple[int, int]:
-        height, width = RESOLUTIONS[self.resolution]
-        if self.aspect_ratio == "16:9":
+
+def _snap16(value: float) -> int:
+    return max(16, round(value / 16) * 16)
+
+
+def compute_size(
+    image_size: tuple[int, int],
+    resolution: str,
+    fit: str,
+    aspect_ratio: str,
+) -> tuple[int, int]:
+    """Return (height, width), both multiples of 16."""
+    if fit == "fixed":
+        height, width = FIXED_RESOLUTIONS[resolution]
+        if aspect_ratio == "16:9":
             height, width = width, height
         return height, width
+    img_w, img_h = image_size
+    scale = LONG_SIDE[resolution] / max(img_w, img_h)
+    return _snap16(img_h * scale), _snap16(img_w * scale)
 
 
 def fetch_image(source: str) -> Image.Image:
@@ -83,7 +111,7 @@ class Wan22I2VPipeline(Pipeline):
 
     def load(self) -> None:
         import torch
-        from diffusers import UniPCMultistepScheduler, WanImageToVideoPipeline
+        from diffusers import WanImageToVideoPipeline
 
         manifest = load_model_manifest(self.settings.models_config)
         model_path = resolve_model(self.settings, self.profile.model, manifest)
@@ -94,32 +122,52 @@ class Wan22I2VPipeline(Pipeline):
             "fp32": torch.float32,
         }[self.settings.dtype]
 
-        log.info("loading %s (%s)", self.profile.model, model_path)
-        pipe = WanImageToVideoPipeline.from_pretrained(model_path, torch_dtype=dtype)
+        device = self.settings.resolve_device()
+        offload = self.settings.offload
+        log.info("device=%s offload=%s dtype=%s", device, offload, self.settings.dtype)
 
-        self._flow_shift = float(self.profile.defaults.get("sample_shift", 5.0))
-        pipe.scheduler = UniPCMultistepScheduler.from_config(
-            pipe.scheduler.config, flow_shift=self._flow_shift
+        # GGUF-quantized experts replace the snapshot's transformers.
+        extra_components = {}
+        if self.profile.gguf:
+            from diffusers import GGUFQuantizationConfig, WanTransformer3DModel
+
+            for target, ref in self.profile.gguf.items():
+                gguf_dir, weight_name = resolve_lora_file(
+                    self.settings, ref.model, ref.weight_name, manifest
+                )
+                log.info("loading GGUF %s -> %s", weight_name, target)
+                extra_components[target] = WanTransformer3DModel.from_single_file(
+                    gguf_dir / weight_name,
+                    quantization_config=GGUFQuantizationConfig(compute_dtype=dtype),
+                    config=str(model_path),
+                    subfolder=target,
+                    torch_dtype=dtype,
+                )
+
+        log.info("loading %s (%s)", self.profile.model, model_path)
+        pipe = WanImageToVideoPipeline.from_pretrained(
+            model_path, torch_dtype=dtype, **extra_components
         )
 
-        self._adapter_targets: list[tuple[str, str]] = []  # (adapter_name, target)
+        self._scheduler_config = dict(pipe.scheduler.config)
+        self._scheduler_key: tuple[str, float] | None = None
+        self._default_boundary = pipe.config.get("boundary_ratio", None)
+
+        self._adapters: list[tuple[str, str, float]] = []  # (adapter, target, strength)
         for target, lora in self.profile.loras.items():
             lora_dir, weight_name = resolve_lora_file(
                 self.settings, lora.model, lora.weight_name, manifest
             )
             adapter_name = f"lora_{target}"
-            log.info("loading LoRA %s -> %s", weight_name or lora.model, target)
+            log.info("loading LoRA %s -> %s (strength %s)", weight_name, target, lora.strength)
             pipe.load_lora_weights(
                 lora_dir,
                 weight_name=weight_name,
                 adapter_name=adapter_name,
                 load_into_transformer_2=(target == "transformer_2"),
             )
-            self._adapter_targets.append((adapter_name, target))
+            self._adapters.append((adapter_name, target, lora.strength))
 
-        device = self.settings.resolve_device()
-        offload = self.settings.offload
-        log.info("device=%s offload=%s dtype=%s", device, offload, self.settings.dtype)
         if device != "cuda":
             pipe.to(device)
         elif offload == "model":
@@ -129,9 +177,9 @@ class Wan22I2VPipeline(Pipeline):
         elif offload == "group":
             from diffusers.hooks import apply_group_offloading
 
-            # Stream the two 14B experts through the GPU in small groups —
-            # required on cards where a single expert (~28 GB bf16) exceeds
-            # VRAM. Group-offloaded modules must NOT be .to()'d afterwards.
+            # Stream the two experts through the GPU in small groups —
+            # required on cards where a single expert exceeds VRAM.
+            # Group-offloaded modules must NOT be .to()'d afterwards.
             for name in ("transformer", "transformer_2"):
                 module = getattr(pipe, name, None)
                 if module is not None:
@@ -142,8 +190,8 @@ class Wan22I2VPipeline(Pipeline):
                         offload_type="leaf_level",
                         use_stream=True,
                         # Pin per-group at transfer time, not all weights up
-                        # front — pinning both 14B experts (~56 GB) gets the
-                        # container OOM-killed on 64-96 GB hosts.
+                        # front — pinning both experts gets the container
+                        # OOM-killed on RAM-tight hosts.
                         low_cpu_mem_usage=True,
                     )
             for name, module in pipe.components.items():
@@ -161,32 +209,50 @@ class Wan22I2VPipeline(Pipeline):
         )
         self._pipe = pipe
 
+    def _set_scheduler(self, name: str, shift: float) -> None:
+        if self._scheduler_key == (name, shift):
+            return
+        if name == "euler":
+            from diffusers import FlowMatchEulerDiscreteScheduler
+
+            self._pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+                self._scheduler_config, shift=shift
+            )
+        else:
+            from diffusers import UniPCMultistepScheduler
+
+            self._pipe.scheduler = UniPCMultistepScheduler.from_config(
+                self._scheduler_config, flow_shift=shift
+            )
+        self._scheduler_key = (name, shift)
+
     def generate(self, params: Wan22I2VParams, ctx: JobContext) -> list[Artifact]:
         import torch
 
         pipe = self._pipe
         image = fetch_image(params.image)
-        height, width = params.size()
+        height, width = compute_size(image.size, params.resolution, params.fit, params.aspect_ratio)
+        log.info("generating %dx%d, %d frames", width, height, params.num_frames)
 
         # Per-module (not pipeline-level) so each expert only ever sees its own
         # adapter — pipeline set_adapters pushes every name into every component.
-        for adapter_name, target in self._adapter_targets:
+        for adapter_name, target, strength in self._adapters:
             module = getattr(pipe, target, None)
             if module is not None:
-                scale = (
+                override = (
                     params.lora_scale_transformer
                     if target == "transformer"
                     else params.lora_scale_transformer_2
                 )
-                module.set_adapters([adapter_name], [scale])
+                module.set_adapters([adapter_name], [strength if override is None else override])
 
-        if params.sample_shift != self._flow_shift:
-            from diffusers import UniPCMultistepScheduler
+        self._set_scheduler(params.scheduler, params.sample_shift)
 
-            pipe.scheduler = UniPCMultistepScheduler.from_config(
-                pipe.scheduler.config, flow_shift=params.sample_shift
-            )
-            self._flow_shift = params.sample_shift
+        boundary = (
+            params.boundary_ratio if params.boundary_ratio is not None else self._default_boundary
+        )
+        if pipe.config.get("boundary_ratio", None) != boundary:
+            pipe.register_to_config(boundary_ratio=boundary)
 
         generator = None
         if params.seed is not None:
@@ -212,5 +278,10 @@ class Wan22I2VPipeline(Pipeline):
         )
 
         frames = result.frames[0]
-        path = write_mp4(frames, ctx.output_dir / "output.mp4", fps=params.frames_per_second)
+        path = write_mp4(
+            frames,
+            ctx.output_dir / f"{ctx.job_id}.mp4",
+            fps=params.frames_per_second,
+            crf=params.crf,
+        )
         return [Artifact(path=path, media_type="video/mp4")]
