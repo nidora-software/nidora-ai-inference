@@ -128,6 +128,9 @@ class Wan22I2VPipeline(Pipeline):
         elif offload == "group":
             from diffusers.hooks import apply_group_offloading
 
+            # Stream the two 14B experts through the GPU in small groups —
+            # required on cards where a single expert (~28 GB bf16) exceeds
+            # VRAM. Group-offloaded modules must NOT be .to()'d afterwards.
             for name in ("transformer", "transformer_2"):
                 module = getattr(pipe, name, None)
                 if module is not None:
@@ -138,7 +141,11 @@ class Wan22I2VPipeline(Pipeline):
                         offload_type="leaf_level",
                         use_stream=True,
                     )
-            pipe.to("cuda")
+            for name, module in pipe.components.items():
+                if name not in ("transformer", "transformer_2") and isinstance(
+                    module, torch.nn.Module
+                ):
+                    module.to("cuda")
         else:
             pipe.to("cuda")
 

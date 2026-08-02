@@ -14,7 +14,8 @@ RUN uv pip install --system --no-cache ".[accel]"
 ENV NIDORA_MODELS_DIR=/models \
     NIDORA_OUTPUTS_DIR=/outputs \
     NIDORA_DB_PATH=/outputs/jobs.sqlite3 \
-    HF_HUB_ENABLE_HF_TRANSFER=1
+    HF_HUB_ENABLE_HF_TRANSFER=1 \
+    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 VOLUME ["/models", "/outputs"]
 EXPOSE 8000

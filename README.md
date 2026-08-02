@@ -74,11 +74,11 @@ All env vars are optional (prefix `NIDORA_`, see `.env.sample`):
 
 ### VRAM guidance (Wan 2.2 A14B i2v, bf16)
 
-| GPU | Suggested settings |
+| GPU | Required setting |
 |---|---|
 | 80 GB (A100/H100) | `NIDORA_OFFLOAD=none` |
-| 48 GB (A6000/L40S) | `NIDORA_OFFLOAD=model` |
-| 24 GB (4090/3090) | `NIDORA_OFFLOAD=model` or `group` — the two 14B experts cannot co-reside; expect offload swaps between the high/low-noise phases |
+| 48 GB (A6000/L40S) | `NIDORA_OFFLOAD=model` — one expert on GPU at a time |
+| 24 GB (4090/3090) | `NIDORA_OFFLOAD=group` — a single 14B expert is ~28 GB in bf16 and does not fit; group offload streams it through VRAM in pieces. `model` mode will OOM. Needs 64 GB+ system RAM. |
 
 ### SageAttention / Triton (optional acceleration)
 

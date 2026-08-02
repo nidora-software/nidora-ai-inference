@@ -14,12 +14,15 @@ Self-hosted async inference API serving **Wan 2.2 I2V A14B** (MoE high/low-noise
 
 | Resource | Minimum | Notes |
 |---|---|---|
-| GPU | 24 GB (RTX 4090) | 480p; experts swap via CPU offload |
+| GPU | 24 GB (RTX 4090) | 480p; requires `NIDORA_OFFLOAD=group` |
 | System RAM | 64 GB+ | both 14B experts park in RAM when offloading |
 | Volume | **200 GB** at `/workspace` | model snapshot alone is 126 GB |
 | Ports | HTTP 8000 | |
 
-48 GB cards (A6000/L40S) run 720p comfortably; 80 GB cards can set `NIDORA_OFFLOAD=none` for max speed.
+On 24 GB cards only `NIDORA_OFFLOAD=group` works — one 14B expert (~28 GB bf16)
+exceeds VRAM, so it must be streamed in pieces. 48 GB cards (A6000/L40S) use
+`NIDORA_OFFLOAD=model` and run 720p comfortably; 80 GB cards set
+`NIDORA_OFFLOAD=none` for max speed.
 
 ## Environment variables (as configured)
 

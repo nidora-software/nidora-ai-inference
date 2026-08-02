@@ -9,7 +9,8 @@ port 8000.
 
 - **GPU**: 48 GB+ (A6000/L40S/A40) is the comfortable floor for Wan 2.2 A14B
   with `NIDORA_OFFLOAD=model`; 80 GB (A100/H100) runs with `OFFLOAD=none`;
-  24 GB (4090) works but swaps experts constantly — expect slower runs.
+  24 GB (4090) requires `OFFLOAD=group` (streams weights through VRAM) and
+  runs noticeably slower.
 - **Disk**: ≥ 200 GB persistent volume. The Wan 2.2 A14B diffusers snapshot
   is **126 GB** (the experts are stored in fp32: 57 GB each + 11 GB text
   encoder), the Lightx2v LoRAs ~1.4 GB, plus download staging overhead —
@@ -126,7 +127,7 @@ Tuning per GPU class (env vars, set before `serve`):
 |---|---|
 | H100/A100 80 GB | `NIDORA_OFFLOAD=none` |
 | A6000/L40S/A40 48 GB | `NIDORA_OFFLOAD=model` |
-| 4090/3090 24 GB | `NIDORA_OFFLOAD=model` (or `group`), stick to 480p |
+| 4090/3090 24 GB | `NIDORA_OFFLOAD=group` (required — `model` OOMs: one 14B expert is ~28 GB bf16 > 24 GB), stick to 480p |
 
 `NIDORA_ATTENTION=auto` uses SageAttention automatically when the `accel`
 extra is installed (provision.sh installs it whenever `nvidia-smi` is
