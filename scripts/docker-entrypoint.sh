@@ -49,7 +49,9 @@ build_sage() { # $1 = wheel cache dir for this GPU arch
     fi
     if ! command -v nvcc >/dev/null 2>&1; then
         log "installing CUDA compiler (conda cuda-nvcc, one-time, ~2 min)..."
-        conda install -y -q -c nvidia cuda-nvcc=12.9 cuda-cudart-dev=12.9 cuda-cccl \
+        # Everything pinned to 12.9 — an unpinned cccl pulls CUDA 13 headers
+        # under a 12.9 nvcc, which breaks the kernel compile.
+        conda install -y -q -c nvidia cuda-nvcc=12.9 cuda-cudart-dev=12.9 "cuda-cccl=12.9" \
             >>"$blog" 2>&1 || { log "cuda-nvcc install failed — see $blog"; return 1; }
     fi
     local src
@@ -64,8 +66,12 @@ build_sage() { # $1 = wheel cache dir for this GPU arch
     local jobs="${NIDORA_SAGE_MAX_JOBS:-2}"
     log "compiling SageAttention for this GPU (MAX_JOBS=$jobs, ~5-20 min; log: $blog)..."
     (cd "$src" && MAX_JOBS="$jobs" python setup.py bdist_wheel) >>"$blog" 2>&1 || {
-        log "compile FAILED — tail of $blog:"
-        tail -40 "$blog"
+        log "compile FAILED — compiler errors from $blog:"
+        # The interesting lines are the nvcc/g++ errors, far above the
+        # Python traceback that ends the log.
+        grep -iE "error|killed|no space|fatal|undefined" "$blog" \
+            | grep -vE "Logging error|--- |Error compiling|RuntimeError|error.*format string" \
+            | head -25
         return 1
     }
     local wheel
