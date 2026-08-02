@@ -161,6 +161,40 @@ def test_warmup_and_offload(settings):
         worker.stop()
 
 
+def test_auto_download_runs_before_warmup(settings, monkeypatch):
+    events = []
+    monkeypatch.setattr(
+        "nidora_ai_inference.core.worker.download_for_profiles",
+        lambda settings, profiles: events.append("download"),
+    )
+    store, worker = make_worker(settings)
+    worker.auto_download()
+    worker.warmup("mock")
+    worker.start()
+    try:
+        wait_loaded(worker, "mock")
+        assert events == ["download"]
+    finally:
+        worker.stop()
+
+
+def test_auto_download_failure_keeps_worker_alive(settings, monkeypatch):
+    def boom(settings, profiles):
+        raise RuntimeError("hf is down")
+
+    monkeypatch.setattr("nidora_ai_inference.core.worker.download_for_profiles", boom)
+    store, worker = make_worker(settings)
+    worker.auto_download()
+    worker.start()
+    try:
+        job = store.create("mock", {})
+        worker.submit(job.id)
+        done = wait_state(store, job.id, {JobState.COMPLETED, JobState.FAILED})
+        assert done.state == JobState.COMPLETED
+    finally:
+        worker.stop()
+
+
 def test_warmup_unknown_profile_keeps_worker_alive(settings):
     store, worker = make_worker(settings)
     worker.start()

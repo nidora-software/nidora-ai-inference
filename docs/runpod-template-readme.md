@@ -40,7 +40,7 @@ All `/v1/*` calls must send the key: `-H "X-Api-Key: <your-secret>"`
 
 ## First boot
 
-The container starts, sees the empty volume, and downloads ~37 GB from HuggingFace into `/workspace/models` (Q6_K GGUF experts, base components, Lightning LoRAs) — typically 5–15 min — then starts serving and warms the model into RAM/VRAM (`NIDORA_WARMUP=wan22-i2v`). Every later boot skips the download and is generating-ready within a few minutes. Watch progress in the container logs; readiness = `GET /health` shows `"loaded_pipeline": "wan22-i2v"`.
+The API comes up immediately; missing weights (~37 GB: Q6_K GGUF experts, base components, Lightning LoRAs) download in the background into `/workspace/models` — typically 5–15 min — then the model warms into RAM/VRAM (`NIDORA_WARMUP=wan22-i2v`). Jobs submitted meanwhile just queue behind the bootstrap. Every later boot skips the download and is generating-ready within a few minutes. Track it via `GET /health`: `activity` goes `downloading` → `loading:wan22-i2v` → `idle`; ready when `"loaded_pipeline": "wan22-i2v"`.
 
 ## Usage
 

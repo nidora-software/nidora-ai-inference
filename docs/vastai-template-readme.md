@@ -48,12 +48,14 @@ the instance deletes it (and re-triggers the ~37 GB download on the next one).
 
 ## First boot
 
-The container starts, sees no weights, and downloads ~37 GB from HuggingFace
-into `/models` (Q6_K GGUF experts, base components, Lightning LoRAs) —
-typically 5–15 min — then starts serving and warms the model into RAM/VRAM
-(`NIDORA_WARMUP=wan22-i2v`). Every later boot skips the download and is
-generating-ready within a few minutes. Watch progress in the instance logs;
-readiness = `GET /health` shows `"loaded_pipeline": "wan22-i2v"`.
+The API comes up immediately; missing weights (~37 GB: Q6_K GGUF experts,
+base components, Lightning LoRAs) download in the background into `/models`
+— typically 5–15 min — then the model warms into RAM/VRAM
+(`NIDORA_WARMUP=wan22-i2v`). Jobs submitted meanwhile just queue behind the
+bootstrap. Every later boot skips the download and is generating-ready
+within a few minutes. Track it via `GET /health`: `activity` goes
+`downloading` → `loading:wan22-i2v` → `idle`; ready when
+`"loaded_pipeline": "wan22-i2v"`.
 
 ## Usage
 

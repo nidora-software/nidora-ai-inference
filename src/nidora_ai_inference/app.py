@@ -36,11 +36,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         profiles = load_pipeline_profiles(settings.pipelines_config)
         settings.outputs_dir.mkdir(parents=True, exist_ok=True)
 
-        if settings.auto_download:
-            from .models.manifest import download_for_profiles
-
-            download_for_profiles(settings, profiles)
-
         store = JobStore(settings.db_path)
         worker = GpuWorker(store=store, settings=settings, profiles=profiles)
 
@@ -49,13 +44,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.store = store
         app.state.worker = worker
 
-        worker.start()
+        # Bootstrap runs on the worker queue, strictly in this order:
+        # download missing weights -> warm up -> (recovered/new) jobs.
+        # The server starts serving immediately; /health shows the activity.
+        if settings.auto_download:
+            worker.auto_download()
         if settings.warmup:
             if settings.warmup in profiles:
                 log.info("warming up pipeline at startup: %s", settings.warmup)
                 worker.warmup(settings.warmup)
             else:
                 log.warning("NIDORA_WARMUP=%r is not a known pipeline — skipped", settings.warmup)
+        worker.start()
         log.info(
             "nidora-ai-inference %s ready — device=%s, pipelines=%s",
             __version__,

@@ -13,6 +13,7 @@ import secrets
 import threading
 from dataclasses import dataclass
 
+from ..models.manifest import download_for_profiles
 from ..outputs.storage import artifact_records, job_output_dir
 from ..pipelines import JobCancelled, JobContext, Pipeline, resolve_pipeline_class
 from .config import PipelineProfile, Settings
@@ -21,6 +22,11 @@ from .jobs import JobState, JobStore
 log = logging.getLogger("nidora.worker")
 
 _STOP = object()
+
+
+@dataclass
+class _AutoDownload:
+    pass
 
 
 @dataclass
@@ -70,13 +76,18 @@ class GpuWorker:
 
     @property
     def activity(self) -> str:
-        """"idle" | "loading:<profile>" | "job:<job_id>"."""
+        """"idle" | "downloading" | "loading:<profile>" | "job:<job_id>"."""
         return self._activity
 
     # -- job submission / cancellation --------------------------------------
 
     def submit(self, job_id: str) -> None:
         self._queue.put(job_id)
+
+    def auto_download(self) -> None:
+        """Queue a fetch of any missing model files (runs before anything
+        queued after it — enqueue before warmup so weights land first)."""
+        self._queue.put(_AutoDownload())
 
     def warmup(self, profile_name: str) -> None:
         """Queue a pipeline load ahead of any job needing it."""
@@ -108,7 +119,9 @@ class GpuWorker:
             if item is _STOP:
                 self._unload_current()
                 return
-            if isinstance(item, _Warmup):
+            if isinstance(item, _AutoDownload):
+                self._auto_download()
+            elif isinstance(item, _Warmup):
                 self._warmup(item.profile)
             elif isinstance(item, _Offload):
                 if item.profile is None or item.profile == self._current_profile:
@@ -116,6 +129,13 @@ class GpuWorker:
             else:
                 self._process(item)
             self._activity = "idle"
+
+    def _auto_download(self) -> None:
+        self._activity = "downloading"
+        try:
+            download_for_profiles(self.settings, self.profiles)
+        except Exception:  # noqa: BLE001 — download errors must never kill the worker
+            log.exception("auto-download failed")
 
     def _warmup(self, profile_name: str) -> None:
         try:
