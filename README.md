@@ -8,8 +8,9 @@ launch configuration, and the deployment docs.
 
 - Image: `erenck/nidora-ai-inference:latest` (also on GHCR), built on
   `lmsysorg/sglang:v0.5.16-cu129` + `sglang[diffusion]`
-- Default model: `Wan-AI/Wan2.2-I2V-A14B-Diffusers` with
-  `lightx2v/Wan2.2-Distill-Loras` (4-step Lightning distill)
+- Production config: `MODEL_PATH=Wan-AI/Wan2.2-I2V-A14B-Diffusers` +
+  `LORA_PATH=lightx2v/Wan2.2-Distill-Loras` (4-step Lightning distill) —
+  both env-driven, neither baked in
 - API: `POST /v1/videos` → poll → download; see [docs/api.md](docs/api.md)
 
 ## Requirements
@@ -31,10 +32,14 @@ unbenchmarked, the 80 GB path is the supported one.
 docker run --gpus all -p 127.0.0.1:8000:8000 \
   -v /path/to/volume:/workspace \
   -e MODEL_PATH=Wan-AI/Wan2.2-I2V-A14B-Diffusers \
+  -e LORA_PATH=lightx2v/Wan2.2-Distill-Loras \
   erenck/nidora-ai-inference:latest
 ```
 
 `MODEL_PATH` is required — the container refuses to start without it.
+`LORA_PATH` is optional with no default — but for Wan 2.2 you want the
+distill LoRA set, otherwise 4-step requests produce noise (the base model
+needs ~40+ steps).
 
 **Security note**: the SGLang diffusion server has **no built-in API auth**
 — never expose the port publicly. Production deployments run tunnel-only

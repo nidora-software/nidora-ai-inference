@@ -3,7 +3,7 @@
 #
 # Environment:
 #   MODEL_PATH         REQUIRED — HF repo id or local path (no default)
-#   LORA_PATH          default lightx2v/Wan2.2-Distill-Loras ("none" disables)
+#   LORA_PATH          optional — LoRA repo id/path; unset = no LoRA
 #   PORT               default 8000
 #   CF_TUNNEL_TOKEN    optional: Cloudflare Tunnel for a stable HTTPS hostname
 #   SGLANG_EXTRA_ARGS  extra `sglang serve` flags appended verbatim
@@ -36,8 +36,7 @@ args=(
     --port "$PORT"
 )
 
-LORA_PATH="${LORA_PATH:-lightx2v/Wan2.2-Distill-Loras}"
-if [ "$LORA_PATH" != "none" ]; then
+if [ -n "${LORA_PATH:-}" ]; then
     args+=(--lora-path "$LORA_PATH")
 fi
 

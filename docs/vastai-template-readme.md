@@ -26,6 +26,7 @@ served by SGLang Diffusion's OpenAI-compatible async video API.
 - **Environment**:
   ```
   -e MODEL_PATH=Wan-AI/Wan2.2-I2V-A14B-Diffusers   # REQUIRED
+  -e LORA_PATH=lightx2v/Wan2.2-Distill-Loras       # needed for 4-step generation
   -e CF_TUNNEL_TOKEN=<token>      # stable HTTPS hostname (strongly recommended)
   -e SGLANG_EXTRA_ARGS=...        # optional tuning, see below
   ```
