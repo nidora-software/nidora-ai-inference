@@ -28,11 +28,15 @@ unbenchmarked, the 80 GB path is the supported one.
 ## Run
 
 ```bash
-docker run --gpus all -p 8000:8000 \
+docker run --gpus all -p 127.0.0.1:8000:8000 \
   -v /path/to/volume:/workspace \
-  -e API_KEY=change-me \
   erenck/nidora-ai-inference:latest
 ```
+
+**Security note**: the SGLang diffusion server has **no built-in API auth**
+— never expose the port publicly. Production deployments run tunnel-only
+with Cloudflare Access in front (see
+[docs/deploy-pods.md](docs/deploy-pods.md)).
 
 First boot downloads the model into `/workspace/hf` (one-time per volume),
 warms it up (`--warmup-mode server`), then serves. Configuration is

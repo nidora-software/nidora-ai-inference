@@ -1,13 +1,13 @@
 # Local dockerized run mirroring the rental-pod flow (needs an 80 GB GPU):
-#   API_KEY=change-me docker compose up --build
+#   docker compose up --build
+# NOTE: the API has no built-in auth — bind to localhost only.
 services:
   inference:
     build: .
     image: nidora-ai-inference:local
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
-      API_KEY: ${API_KEY:?set API_KEY}
       SGLANG_EXTRA_ARGS: ${SGLANG_EXTRA_ARGS:-}
       CF_TUNNEL_TOKEN: ${CF_TUNNEL_TOKEN:-}
     volumes:

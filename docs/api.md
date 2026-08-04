@@ -4,7 +4,19 @@ The server is SGLang Diffusion's OpenAI-compatible API. Full upstream docs:
 https://docs.sglang.io/diffusion/api/openai_api.html — this page covers the
 subset the app uses.
 
-All `/v1/*` requests need `Authorization: Bearer <API_KEY>`.
+## Authentication
+
+The SGLang diffusion server has **no built-in API auth** (verified against
+v0.5.16). Deployments run tunnel-only behind **Cloudflare Access** with a
+service token; every request must carry the Access headers:
+
+```
+CF-Access-Client-Id: <service-token-id>.access
+CF-Access-Client-Secret: <service-token-secret>
+```
+
+Requests without a valid token are rejected at Cloudflare's edge before
+reaching the pod.
 
 ## Generate a video (image-to-video)
 
@@ -13,7 +25,8 @@ Async: create → poll → download.
 ```bash
 # 1. Create (multipart; input_reference is the source image)
 curl -s https://inference.nidora.ai/v1/videos \
-  -H "Authorization: Bearer $API_KEY" \
+  -H "CF-Access-Client-Id: $CF_ACCESS_ID" \
+  -H "CF-Access-Client-Secret: $CF_ACCESS_SECRET" \
   -F input_reference=@input.jpg \
   -F prompt="the woman smiles and waves at the camera" \
   -F size="480x832" \
@@ -27,11 +40,13 @@ image is already hosted.
 ```bash
 # 2. Poll until status == "completed"
 curl -s https://inference.nidora.ai/v1/videos/video_... \
-  -H "Authorization: Bearer $API_KEY"
+  -H "CF-Access-Client-Id: $CF_ACCESS_ID" \
+  -H "CF-Access-Client-Secret: $CF_ACCESS_SECRET"
 
 # 3. Download the mp4
 curl -s https://inference.nidora.ai/v1/videos/video_.../content \
-  -H "Authorization: Bearer $API_KEY" -o out.mp4
+  -H "CF-Access-Client-Id: $CF_ACCESS_ID" \
+  -H "CF-Access-Client-Secret: $CF_ACCESS_SECRET" -o out.mp4
 ```
 
 Generation parameters beyond the OpenAI schema (seed, negative prompt, step

@@ -25,10 +25,15 @@ served by SGLang Diffusion's OpenAI-compatible async video API.
 - **Ports**: 8000/tcp (omit if tunnel-only)
 - **Environment**:
   ```
-  -e API_KEY=<your-secret>
-  -e CF_TUNNEL_TOKEN=<token>      # optional: stable HTTPS hostname
+  -e CF_TUNNEL_TOKEN=<token>      # stable HTTPS hostname (strongly recommended)
   -e SGLANG_EXTRA_ARGS=...        # optional tuning, see below
   ```
+
+**Security**: the SGLang diffusion server has **no built-in API auth**. Run
+tunnel-only (omit the 8000 port mapping) and protect the hostname with
+**Cloudflare Access** (service token) — see
+[deploy-pods.md](deploy-pods.md). Only map port 8000 for trusted-network or
+debugging use.
 
 ## First boot
 
@@ -43,7 +48,8 @@ See [api.md](api.md). Short version:
 
 ```bash
 curl -s http://<IP>:<PORT>/v1/videos \
-  -H "Authorization: Bearer $API_KEY" \
+  -H "CF-Access-Client-Id: $CF_ACCESS_ID" \
+  -H "CF-Access-Client-Secret: $CF_ACCESS_SECRET" \
   -F input_reference=@input.jpg \
   -F prompt="the woman smiles and waves" \
   -F size="480x832" -F seconds=5
@@ -61,5 +67,6 @@ curl -s http://<IP>:<PORT>/v1/videos \
 
 - The volume outlives the instance — destroy/recreate pods freely, the
   download happens once.
-- Keep `API_KEY` set: Vast IPs (and tunnel hostnames) are public.
+- Never expose port 8000 publicly — the API has no built-in auth; use the
+  tunnel + Cloudflare Access.
 - Pin a commit-SHA image tag for reproducibility; `:latest` tracks main.

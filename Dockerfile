@@ -11,8 +11,13 @@ ADD https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflar
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/cloudflared /usr/local/bin/docker-entrypoint.sh
 
+# No HF_HUB_ENABLE_HF_TRANSFER: sglang doesn't ship hf_transfer, and setting
+# it without the package makes huggingface_hub error out. Fast downloads come
+# from hf-xet (huggingface_hub's default backend) instead.
+# SGLANG_DIFFUSION_CACHE_ROOT holds generated outputs/caches — keep it on the
+# persistent volume rather than the container disk.
 ENV HF_HOME=/workspace/hf \
-    HF_HUB_ENABLE_HF_TRANSFER=1
+    SGLANG_DIFFUSION_CACHE_ROOT=/workspace/sgl_diffusion
 
 VOLUME ["/workspace"]
 EXPOSE 8000

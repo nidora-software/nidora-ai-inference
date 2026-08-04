@@ -16,9 +16,9 @@ and env vars — nothing else.
 
 Template walkthrough: [vastai-template-readme.md](vastai-template-readme.md).
 Summary: image `erenck/nidora-ai-inference:latest`, Docker ENTRYPOINT mode,
-300 GB volume at `/workspace`, port 8000 (or tunnel), env `API_KEY` (+
-optional `CF_TUNNEL_TOKEN`, `SGLANG_EXTRA_ARGS`). Filter offers: H100/A100
-80 GB, CPU RAM ≥ 64 GB, Min CUDA 12.9, high `inet_down`.
+300 GB volume at `/workspace`, env `CF_TUNNEL_TOKEN` (+ optional
+`SGLANG_EXTRA_ARGS`), no port mapping needed (tunnel-only). Filter offers:
+H100/A100 80 GB, CPU RAM ≥ 64 GB, Min CUDA 12.9, high `inet_down`.
 
 ## RunPod
 
@@ -37,6 +37,19 @@ Tunnel the API lives at a fixed hostname (e.g.
 2. Public hostname: `inference.<your-domain>` → `HTTP://localhost:8000`.
 3. Set `-e CF_TUNNEL_TOKEN=<token>` on the template. The tunnel is
    outbound-only — no port mapping needed at all.
+
+**Auth (required)** — the SGLang diffusion server has no built-in API auth,
+so protect the hostname with Cloudflare Access:
+
+1. Zero Trust → Access → **Service Auth** → create a **Service Token**; note
+   the Client ID and Client Secret.
+2. Zero Trust → Access → **Applications** → add a self-hosted application
+   for `inference.<your-domain>`, session duration irrelevant.
+3. Add a policy with action **Service Auth** requiring that service token.
+
+Clients then send `CF-Access-Client-Id` / `CF-Access-Client-Secret` headers
+(see [api.md](api.md)); anything without them is rejected at Cloudflare's
+edge before reaching the pod.
 
 ## Verify
 

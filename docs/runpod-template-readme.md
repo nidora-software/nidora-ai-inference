@@ -23,10 +23,14 @@ served by SGLang Diffusion's OpenAI-compatible async video API.
 - **Volume**: network volume mounted at `/workspace`
 - **Environment**:
   ```
-  API_KEY=<your-secret>            # REQUIRED: proxy URLs are public
-  CF_TUNNEL_TOKEN=<token>          # optional: stable HTTPS hostname instead of the proxy
+  CF_TUNNEL_TOKEN=<token>          # stable HTTPS hostname; REQUIRED for auth (see below)
   SGLANG_EXTRA_ARGS=               # optional tuning (attention backend, torch compile, ...)
   ```
+
+**Security**: the SGLang diffusion server has **no built-in API auth**, and
+RunPod's `*.proxy.runpod.net` URLs are publicly reachable. Don't rely on the
+proxy for production — use the Cloudflare Tunnel + **Cloudflare Access**
+(service token) and skip exposing port 8000 entirely.
 
 The container's default entrypoint starts the server — nothing to run
 manually.
@@ -44,7 +48,8 @@ See [api.md](api.md). Short version, via RunPod's proxy:
 
 ```bash
 curl -s https://<POD_ID>-8000.proxy.runpod.net/v1/videos \
-  -H "Authorization: Bearer $API_KEY" \
+  -H "CF-Access-Client-Id: $CF_ACCESS_ID" \
+  -H "CF-Access-Client-Secret: $CF_ACCESS_SECRET" \
   -F input_reference=@input.jpg \
   -F prompt="the woman smiles and waves" \
   -F size="480x832" -F seconds=5
