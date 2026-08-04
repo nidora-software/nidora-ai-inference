@@ -1,4 +1,6 @@
+# The build only COPYs scripts/ — everything else is context weight.
 .git
+.gitignore
 .github
 docs
 workspace
@@ -7,4 +9,3 @@ workspace
 .DS_Store
 README.md
 LICENSE
-docker-compose.yml

@@ -3,7 +3,7 @@
 .env.*
 !.env.sample
 
-# Local run artifacts (docker-compose volume mount)
+# Local run artifacts (bind-mounted /workspace volume)
 /workspace/
 
 # OS / IDE
