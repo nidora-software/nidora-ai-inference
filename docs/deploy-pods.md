@@ -16,8 +16,9 @@ and env vars — nothing else.
 
 Template walkthrough: [vastai-template-readme.md](vastai-template-readme.md).
 Summary: image `erenck/nidora-ai-inference:latest`, Docker ENTRYPOINT mode,
-300 GB volume at `/workspace`, env `CF_TUNNEL_TOKEN` (+ optional
-`SGLANG_EXTRA_ARGS`), no port mapping needed (tunnel-only). Filter offers:
+300 GB volume at `/workspace`, env `MODEL_PATH` (required) +
+`CF_TUNNEL_TOKEN` (+ optional `SGLANG_EXTRA_ARGS`), no port mapping needed
+(tunnel-only). Filter offers:
 H100/A100 80 GB, CPU RAM ≥ 64 GB, Min CUDA 12.9, high `inet_down`.
 
 ## RunPod

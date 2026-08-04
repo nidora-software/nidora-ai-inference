@@ -8,6 +8,8 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
+      MODEL_PATH: ${MODEL_PATH:?MODEL_PATH is required}
+      LORA_PATH: ${LORA_PATH:-}
       SGLANG_EXTRA_ARGS: ${SGLANG_EXTRA_ARGS:-}
       CF_TUNNEL_TOKEN: ${CF_TUNNEL_TOKEN:-}
     volumes:

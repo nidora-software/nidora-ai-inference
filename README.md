@@ -30,8 +30,11 @@ unbenchmarked, the 80 GB path is the supported one.
 ```bash
 docker run --gpus all -p 127.0.0.1:8000:8000 \
   -v /path/to/volume:/workspace \
+  -e MODEL_PATH=Wan-AI/Wan2.2-I2V-A14B-Diffusers \
   erenck/nidora-ai-inference:latest
 ```
+
+`MODEL_PATH` is required — the container refuses to start without it.
 
 **Security note**: the SGLang diffusion server has **no built-in API auth**
 — never expose the port publicly. Production deployments run tunnel-only

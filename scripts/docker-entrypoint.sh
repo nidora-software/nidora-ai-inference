@@ -2,7 +2,7 @@
 # Container entrypoint: optional Cloudflare Tunnel + `sglang serve`.
 #
 # Environment:
-#   MODEL_PATH         default Wan-AI/Wan2.2-I2V-A14B-Diffusers
+#   MODEL_PATH         REQUIRED — HF repo id or local path (no default)
 #   LORA_PATH          default lightx2v/Wan2.2-Distill-Loras ("none" disables)
 #   PORT               default 8000
 #   CF_TUNNEL_TOKEN    optional: Cloudflare Tunnel for a stable HTTPS hostname
@@ -17,6 +17,11 @@ set -euo pipefail
 
 PORT="${PORT:-8000}"
 
+if [ -z "${MODEL_PATH:-}" ]; then
+    echo "[entrypoint] ERROR: MODEL_PATH is required (e.g. MODEL_PATH=Wan-AI/Wan2.2-I2V-A14B-Diffusers)" >&2
+    exit 1
+fi
+
 if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
     echo "[entrypoint] starting cloudflared tunnel (public hostname -> localhost:${PORT})"
     cloudflared tunnel --no-autoupdate run --token "$CF_TUNNEL_TOKEN" &
@@ -26,7 +31,7 @@ else
 fi
 
 args=(
-    --model-path "${MODEL_PATH:-Wan-AI/Wan2.2-I2V-A14B-Diffusers}"
+    --model-path "$MODEL_PATH"
     --host 0.0.0.0
     --port "$PORT"
 )

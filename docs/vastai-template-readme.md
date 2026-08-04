@@ -25,6 +25,7 @@ served by SGLang Diffusion's OpenAI-compatible async video API.
 - **Ports**: 8000/tcp (omit if tunnel-only)
 - **Environment**:
   ```
+  -e MODEL_PATH=Wan-AI/Wan2.2-I2V-A14B-Diffusers   # REQUIRED
   -e CF_TUNNEL_TOKEN=<token>      # stable HTTPS hostname (strongly recommended)
   -e SGLANG_EXTRA_ARGS=...        # optional tuning, see below
   ```

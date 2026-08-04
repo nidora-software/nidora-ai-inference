@@ -23,6 +23,7 @@ served by SGLang Diffusion's OpenAI-compatible async video API.
 - **Volume**: network volume mounted at `/workspace`
 - **Environment**:
   ```
+  MODEL_PATH=Wan-AI/Wan2.2-I2V-A14B-Diffusers   # REQUIRED
   CF_TUNNEL_TOKEN=<token>          # stable HTTPS hostname; REQUIRED for auth (see below)
   SGLANG_EXTRA_ARGS=               # optional tuning (attention backend, torch compile, ...)
   ```
