@@ -77,8 +77,24 @@ def fit_480p(img_w: int, img_h: int) -> str:
 
 (720p budget: replace `480 * 832` with `720 * 1280`.)
 
+## Other endpoints
+
+Beyond video generation, the server also exposes (one-liners here; details
+in the [upstream API docs](https://docs.sglang.io/docs/sglang-diffusion/api/openai_api)):
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /models` | served model info (task type, precision) |
+| `GET /v1/videos` | list videos with status (also used for polling) |
+| `POST /v1/images/generations`, `/v1/images/edits`, `GET /v1/images/{id}/content` | image generation/editing (unused by us; the served model is i2v) |
+| `POST /v1/set_lora`, `/v1/merge_lora_weights`, `/v1/unmerge_lora_weights`, `GET /v1/list_loras` | runtime LoRA management (we load the LoRA at launch via `LORA_PATH`) |
+
+Note: the server listens on `PORT` (8000 in our image; upstream's own
+default is 30000 — their docs' `30010` examples are just avoiding a
+co-located LLM server).
+
 ## Health / readiness
 
-`GET /health` (no auth). With `--warmup-mode server` the model is loaded and
-warmed before the server reports ready, so a healthy server is a fast server
-— no first-job load penalty.
+`GET /health` (no auth). With server-mode warmup (the default) the model is
+loaded and warmed before the server reports ready, so a healthy server is a
+fast server — no first-job load penalty.
