@@ -11,6 +11,10 @@ Any model family SGLang Diffusion supports can be served by pointing
 
 - Image: `erenck/nidora-ai-inference:latest` (also on GHCR), built on
   `lmsysorg/sglang:v0.5.16-cu129` + `sglang[diffusion]`
+- Experimental: `erenck/nidora-ai-inference:experimental` — same layout on a
+  date-pinned SGLang **nightly** ([Dockerfile.nightly](Dockerfile.nightly)),
+  for models merged upstream but not yet released (e.g. MiniMax-H3). Trial
+  pods only, never production.
 - API: `POST /v1/videos` → poll → download (and the image endpoints);
   see [docs/api.md](docs/api.md)
 

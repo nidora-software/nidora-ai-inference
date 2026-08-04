@@ -1,0 +1,23 @@
+# EXPERIMENTAL image on a date-pinned SGLang nightly — for models whose
+# pipelines exist on sglang main but not yet in a release (e.g.
+# MiniMaxAI/MiniMax-H3). Published as the `:experimental` tag; the stable
+# image (Dockerfile) remains the production path.
+ARG SGLANG_BASE=lmsysorg/sglang:nightly-dev-cu12-20260803-12eadf86
+FROM ${SGLANG_BASE}
+
+# Nightly images carry the sglang source checkout; install the diffusion
+# extra against that same tree so engine and deps stay in sync.
+RUN pip install --no-cache-dir -e "/sgl-workspace/sglang/python[diffusion]"
+
+# cloudflared for optional stable HTTPS via Cloudflare Tunnel (CF_TUNNEL_TOKEN).
+ADD https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 /usr/local/bin/cloudflared
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/cloudflared /usr/local/bin/docker-entrypoint.sh
+
+ENV HF_HOME=/workspace/hf \
+    SGLANG_DIFFUSION_CACHE_ROOT=/workspace/sgl_diffusion
+
+VOLUME ["/workspace"]
+EXPOSE 8000
+
+ENTRYPOINT ["docker-entrypoint.sh"]
