@@ -11,3 +11,8 @@
 Thumbs.db
 .idea/
 .vscode/
+
+# Legacy local artifacts
+/outputs/
+uv.lock
+*.sqlite3
