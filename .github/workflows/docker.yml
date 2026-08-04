@@ -65,7 +65,7 @@ jobs:
           sbom: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Registry cache: the SageAttention compile stage (~30-60 min) must
-          # survive between builds; the 10 GB GHA cache evicts it.
+          # Registry cache: the sglang base layers are large; the 10 GB GHA
+          # cache evicts them between builds.
           cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache,mode=max
