@@ -1,163 +1,40 @@
 #!/usr/bin/env bash
-# Container entrypoint:
-#   * optional Cloudflare Tunnel (NIDORA_CF_TUNNEL_TOKEN) — stable HTTPS
-#     hostname regardless of provider IP/port
-#   * SageAttention self-provisioning (NIDORA_BUILD_SAGE=0 disables): install
-#     from the volume wheel cache, or build once in the background for this
-#     pod's GPU arch, cache the wheel, and hot-reload the pipeline via the
-#     API so the running server picks sage up without a restart.
+# Container entrypoint: optional Cloudflare Tunnel + `sglang serve`.
+#
+# Environment:
+#   MODEL_PATH         default Wan-AI/Wan2.2-I2V-A14B-Diffusers
+#   LORA_PATH          default lightx2v/Wan2.2-Distill-Loras ("none" disables)
+#   API_KEY            Bearer token required on /v1/* (set on public deployments)
+#   PORT               default 8000
+#   CF_TUNNEL_TOKEN    optional: Cloudflare Tunnel for a stable HTTPS hostname
+#   SGLANG_EXTRA_ARGS  extra `sglang serve` flags appended verbatim
+#                      (attention backend, offload, torch compile, parallelism)
 set -euo pipefail
 
-log() { echo "[entrypoint] $*"; }
+PORT="${PORT:-8000}"
 
-if [ -n "${NIDORA_CF_TUNNEL_TOKEN:-}" ]; then
-    log "starting cloudflared tunnel (public hostname -> localhost:8000)"
-    cloudflared tunnel --no-autoupdate run --token "$NIDORA_CF_TUNNEL_TOKEN" &
+if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
+    echo "[entrypoint] starting cloudflared tunnel (public hostname -> localhost:${PORT})"
+    cloudflared tunnel --no-autoupdate run --token "$CF_TUNNEL_TOKEN" &
 fi
 
-SAGE_REF="${NIDORA_SAGE_REF:-v2.2.0}"
+args=(
+    --model-path "${MODEL_PATH:-Wan-AI/Wan2.2-I2V-A14B-Diffusers}"
+    --host 0.0.0.0
+    --port "$PORT"
+    --warmup-mode server
+)
 
-sage_ok() {
-    python - <<'EOF' 2>/dev/null
-import sys
-from importlib.metadata import version
-from packaging.version import Version
-sys.exit(0 if Version(version("sageattention")) >= Version("2.1.1") else 1)
-EOF
-}
+LORA_PATH="${LORA_PATH:-lightx2v/Wan2.2-Distill-Loras}"
+if [ "$LORA_PATH" != "none" ]; then
+    args+=(--lora-path "$LORA_PATH")
+fi
 
-gpu_cap() {
-    python -c "import torch; print('%d%d' % torch.cuda.get_device_capability())" 2>/dev/null
-}
+if [ -n "${API_KEY:-}" ]; then
+    args+=(--api-key "$API_KEY")
+else
+    echo "[entrypoint] WARNING: API_KEY not set — the API is unauthenticated"
+fi
 
-install_cached_wheel() {
-    local wheel
-    wheel=$(ls -t "$1"/sageattention-*.whl 2>/dev/null | head -1)
-    [ -n "$wheel" ] || return 1
-    log "installing cached SageAttention wheel: $wheel"
-    pip install --no-cache-dir --quiet "$wheel"
-}
-
-build_sage() { # $1 = wheel cache dir for this GPU arch
-    mkdir -p "$1"
-    local blog="$1/build.log" # persisted on the volume for post-mortems
-    : >"$blog"
-    if ! command -v g++ >/dev/null 2>&1; then
-        log "installing g++ (one-time)..."
-        { apt-get update -qq && apt-get install -y -qq --no-install-recommends g++; } \
-            >>"$blog" 2>&1 || { log "g++ install failed — see $blog"; return 1; }
-    fi
-    if ! command -v nvcc >/dev/null 2>&1; then
-        # Full toolkit, not piecemeal packages: torch's headers pull in
-        # cusparse.h/cublas_v2.h/cuda_fp16.h etc., and hand-picking dev
-        # packages keeps missing one. Pinned to the image's CUDA 12.9.
-        log "installing CUDA toolkit 12.9 (conda, one-time, ~3-5 min)..."
-        conda install -y -q -c nvidia cuda-toolkit=12.9 \
-            >>"$blog" 2>&1 || { log "cuda-toolkit install failed — see $blog"; return 1; }
-    fi
-    # conda parks CUDA headers/libs under targets/; torch's extension build
-    # only searches $CUDA_HOME/include, so widen the compiler search paths.
-    export CUDA_HOME="${CUDA_HOME:-/opt/conda}"
-    export CPATH="/opt/conda/targets/x86_64-linux/include${CPATH:+:$CPATH}"
-    export LIBRARY_PATH="/opt/conda/targets/x86_64-linux/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
-    local src
-    src=$(mktemp -d)
-    log "fetching SageAttention ${SAGE_REF}..."
-    curl -LsSf "https://github.com/thu-ml/SageAttention/archive/refs/tags/${SAGE_REF}.tar.gz" \
-        | tar xz -C "$src" --strip-components=1 || { log "fetch failed"; return 1; }
-    pip install --no-cache-dir --quiet ninja packaging wheel >>"$blog" 2>&1
-    # No TORCH_CUDA_ARCH_LIST: setup.py detects the local GPU and compiles
-    # only its arch — ~5x less work than a fat multi-arch wheel. Low default
-    # parallelism: the build overlaps the model load's ~40 GB RAM footprint.
-    local jobs="${NIDORA_SAGE_MAX_JOBS:-2}"
-    log "compiling SageAttention for this GPU (MAX_JOBS=$jobs, ~5-20 min; log: $blog)..."
-    (cd "$src" && MAX_JOBS="$jobs" python setup.py bdist_wheel) >>"$blog" 2>&1 || {
-        log "compile FAILED — compiler errors from $blog:"
-        # The interesting lines are the nvcc/g++ errors, far above the
-        # Python traceback that ends the log.
-        grep -iE "error|killed|no space|fatal|undefined" "$blog" \
-            | grep -vE "Logging error|--- |Error compiling|RuntimeError|error.*format string" \
-            | head -25
-        return 1
-    }
-    local wheel
-    wheel=$(ls "$src"/dist/sageattention-*.whl 2>/dev/null | head -1)
-    [ -n "$wheel" ] || { log "compile produced no wheel — see $blog"; return 1; }
-    cp "$wheel" "$1"/ || return 1
-    pip install --no-cache-dir --quiet "$1/$(basename "$wheel")" || return 1
-    rm -rf "$src"
-    log "SageAttention built and cached: $1/$(basename "$wheel")"
-}
-
-request_server_restart() {
-    # diffusers snapshots sageattention availability at import time, so a
-    # mid-process install needs a full server restart, not a pipeline
-    # reload. Wait until the worker is idle so no running job is killed.
-    local i act
-    for i in $(seq 1 360); do
-        act=$(curl -s localhost:8000/health \
-            | python -c 'import sys,json; d=json.load(sys.stdin); print(d.get("activity","idle"), d.get("queue_depth",0))' \
-            2>/dev/null) || act="idle 0"
-        [ "$act" = "idle 0" ] && break
-        sleep 10
-    done
-    log "restarting server to activate sage attention"
-    touch /tmp/nidora-restart
-    kill "$(cat /tmp/nidora-server.pid 2>/dev/null)" 2>/dev/null || true
-}
-
-provision_sage() {
-    local cap
-    cap=$(gpu_cap)
-    if [ -z "$cap" ]; then
-        log "no CUDA GPU detected — skipping SageAttention provisioning"
-        return 0
-    fi
-    if [ "$cap" -lt 80 ] 2>/dev/null; then
-        log "GPU is sm${cap} (< sm80) — SageAttention unsupported, using sdpa"
-        return 0
-    fi
-    local cache_dir="${NIDORA_WHEELS_DIR:-${NIDORA_MODELS_DIR:-/models}/.wheels}/sage-${SAGE_REF}-sm${cap}"
-    if install_cached_wheel "$cache_dir"; then
-        log "SageAttention ready (cached wheel)"
-        return 0
-    fi
-    # First boot on this volume/GPU combo: build in the background, then
-    # restart the server (when idle); it starts on sdpa meanwhile.
-    (
-        set +e
-        if build_sage "$cache_dir"; then
-            sleep 5 # let uvicorn come up before poking the API
-            request_server_restart
-        else
-            log "SageAttention build failed — continuing on sdpa"
-        fi
-    ) &
-}
-
-case "${NIDORA_ATTENTION:-auto}" in
-    auto|sage)
-        if [ "${NIDORA_BUILD_SAGE:-1}" != "0" ] && ! sage_ok; then
-            provision_sage
-        fi
-        ;;
-esac
-
-# Supervised server: restarts once when the sage build requests it (fresh
-# imports pick up the new package); any other exit propagates as-is.
-SERVER_PID=
-forward_term() { [ -n "$SERVER_PID" ] && kill -TERM "$SERVER_PID" 2>/dev/null; }
-trap forward_term TERM INT
-while true; do
-    "$@" &
-    SERVER_PID=$!
-    echo "$SERVER_PID" >/tmp/nidora-server.pid
-    code=0
-    wait "$SERVER_PID" || code=$? # non-zero on kill; must not trip set -e
-    if [ -f /tmp/nidora-restart ]; then
-        rm -f /tmp/nidora-restart
-        log "server restarting (SageAttention activation)"
-        continue
-    fi
-    exit "$code"
-done
+# shellcheck disable=SC2086 — word splitting of extra args is intentional
+exec sglang serve "${args[@]}" ${SGLANG_EXTRA_ARGS:-} "$@"

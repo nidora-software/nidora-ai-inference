@@ -1,27 +1,17 @@
-# Local dockerized run that mirrors the rental-pod flow:
-# same image, same volume layout (/models, /outputs), same serve entrypoint.
-#
-#   docker compose up --build
-#
-# Weights: ./models on the host is mounted at /models — fill it manually
-# (same as the non-docker flow) or uncomment NIDORA_AUTO_DOWNLOAD below.
-# On a machine without an NVIDIA GPU (e.g. macOS), remove the `deploy:`
-# block and set NIDORA_DEVICE=cpu — only the mock pipeline is practical there.
-
+# Local dockerized run mirroring the rental-pod flow (needs an 80 GB GPU):
+#   API_KEY=change-me docker compose up --build
 services:
   inference:
     build: .
     image: nidora-ai-inference:local
     ports:
       - "8000:8000"
-    volumes:
-      - ./models:/models
-      - ./outputs:/outputs
     environment:
-      NIDORA_OFFLOAD: ${NIDORA_OFFLOAD:-model}
-      NIDORA_ATTENTION: ${NIDORA_ATTENTION:-auto}
-      # NIDORA_AUTO_DOWNLOAD: "1"   # cloud-pod behavior: fetch missing weights at startup
-      # HF_TOKEN: ${HF_TOKEN}       # for gated repos when auto-downloading
+      API_KEY: ${API_KEY:?set API_KEY}
+      SGLANG_EXTRA_ARGS: ${SGLANG_EXTRA_ARGS:-}
+      CF_TUNNEL_TOKEN: ${CF_TUNNEL_TOKEN:-}
+    volumes:
+      - ./workspace:/workspace
     deploy:
       resources:
         reservations:

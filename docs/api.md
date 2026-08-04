@@ -1,0 +1,69 @@
+# API reference
+
+The server is SGLang Diffusion's OpenAI-compatible API. Full upstream docs:
+https://docs.sglang.io/diffusion/api/openai_api.html — this page covers the
+subset the app uses.
+
+All `/v1/*` requests need `Authorization: Bearer <API_KEY>`.
+
+## Generate a video (image-to-video)
+
+Async: create → poll → download.
+
+```bash
+# 1. Create (multipart; input_reference is the source image)
+curl -s https://inference.nidora.ai/v1/videos \
+  -H "Authorization: Bearer $API_KEY" \
+  -F input_reference=@input.jpg \
+  -F prompt="the woman smiles and waves at the camera" \
+  -F size="480x832" \
+  -F seconds=5
+# -> {"id": "video_...", "status": "queued", ...}
+```
+
+A JSON body with `reference_url` works instead of multipart when the input
+image is already hosted.
+
+```bash
+# 2. Poll until status == "completed"
+curl -s https://inference.nidora.ai/v1/videos/video_... \
+  -H "Authorization: Bearer $API_KEY"
+
+# 3. Download the mp4
+curl -s https://inference.nidora.ai/v1/videos/video_.../content \
+  -H "Authorization: Bearer $API_KEY" -o out.mp4
+```
+
+Generation parameters beyond the OpenAI schema (seed, negative prompt, step
+count, guidance, fps) are passed as extra form/body fields — confirm the
+exact accepted names against the server's OpenAPI schema at `/openapi.json`
+for the pinned SGLang version.
+
+## Recommended defaults (Wan 2.2 A14B + Lightning distill LoRA)
+
+- 81 frames @ 16 fps ≈ 5 s (the model's native pacing)
+- 4 inference steps, guidance 1.0 (the distill LoRA is a 4-step distill)
+- fixed `seed` for reproducibility
+
+## Client-side sizing (aspect-preserving 480p)
+
+`size` is explicit per request. To keep the input image's aspect ratio at the
+largest resolution fitting the 480p pixel budget (480×832), compute:
+
+```python
+import math
+
+def fit_480p(img_w: int, img_h: int) -> str:
+    scale = math.sqrt((480 * 832) / (img_w * img_h))
+    w = max(16, round(img_w * scale) // 16 * 16)
+    h = max(16, round(img_h * scale) // 16 * 16)
+    return f"{w}x{h}"
+```
+
+(720p budget: replace `480 * 832` with `720 * 1280`.)
+
+## Health / readiness
+
+`GET /health` (no auth). With `--warmup-mode server` the model is loaded and
+warmed before the server reports ready, so a healthy server is a fast server
+— no first-job load penalty.

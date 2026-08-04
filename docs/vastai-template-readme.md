@@ -1,154 +1,65 @@
-# Nidora AI Inference — Wan 2.2 Image-to-Video
+# Nidora AI Inference — Wan 2.2 Image-to-Video (SGLang Diffusion)
 
-Self-hosted async inference API serving **Wan 2.2 I2V A14B** (MoE high/low-noise experts) as **Q6_K GGUF quants** with **Lightning 4-step LoRAs** — fast video generation behind a clean REST API. Built on diffusers + FastAPI.
+Self-hosted **Wan 2.2 I2V A14B** with **Lightning 4-step distill LoRAs**,
+served by SGLang Diffusion's OpenAI-compatible async video API.
 
-- Image: `erenck/nidora-ai-inference:latest` (Docker Hub; also on GHCR as `ghcr.io/nidora-software/nidora-ai-inference`)
+- Image: `erenck/nidora-ai-inference:latest` (also on GHCR)
 - Source: https://github.com/nidora-software/nidora-ai-inference
 - License: MIT
-
-## What it does
-
-`POST` a job with an input image + prompt, poll until done, download an H.264 MP4. A single GPU worker processes jobs sequentially from a queue (SQLite-backed, survives restarts, supports cancellation). Pipelines, models, and LoRAs are YAML-configured — the same image can serve other model/LoRA combos.
 
 ## Requirements
 
 | Resource | Minimum | Notes |
 |---|---|---|
-| GPU | 24 GB (RTX 4090) | `NIDORA_OFFLOAD=model` — one Q6_K expert (~12 GB) on GPU at a time |
-| System RAM | **48 GB minimum, 64 GB recommended** | both experts + text encoder park in RAM (~40–50 GB peak at load). Vast enforces the offer's RAM allocation as a hard docker memory limit — less RAM = OOM kill (exit 137) during model load. Filter offers by CPU RAM ≥ 48 GB. |
-| Disk | **100 GB** | ~37 GB of weights + outputs headroom |
-| Ports | HTTP 8000 | Vast maps it to a random public port |
-
-48 GB+ cards can set `NIDORA_OFFLOAD=none` (both experts + text encoder
-resident, ~35 GB) for max speed. 24–32 GB cards (4090, 5090) need
-`NIDORA_OFFLOAD=model`.
+| GPU | **H100 / A100 80 GB** | bf16 A14B needs ~70 GB resident for full speed |
+| System RAM | 64 GB+ | filter offers by CPU RAM |
+| Disk | 20 GB container + **300 GB volume** at `/workspace` | ~126 GB model snapshot lives in the volume's HF cache |
+| Ports | 8000/tcp | optional with a Cloudflare Tunnel |
+| Host CUDA | ≥ 12.9 | set Min CUDA in the offer filter |
 
 ## Template setup
 
-- **Image**: `erenck/nidora-ai-inference:latest` (or pin a commit-SHA tag)
-- **Launch mode**: run the image's entrypoint (the default command *is* `serve`) — no on-start script needed
-- **Disk**: 100 GB+
-- **Docker options**:
-
-```
--p 8000:8000
--e NIDORA_AUTO_DOWNLOAD=1
--e NIDORA_WARMUP=wan22-i2v
--e NIDORA_OFFLOAD=model
--e NIDORA_ATTENTION=auto
--e NIDORA_API_KEY=<your-secret>
-```
-
-`NIDORA_API_KEY` is **required** — Vast instances get a public IP. All
-`/v1/*` calls must send the key: `-H "X-Api-Key: <your-secret>"`
-(or `Authorization: Bearer <your-secret>`). `/health` stays open.
-
-Weights, outputs, and the job store live at the image defaults `/models` and
-`/outputs` on the instance disk. The disk survives **stop/start**; destroying
-the instance deletes it (and re-triggers the ~37 GB download on the next one).
-
-## HTTPS via Cloudflare Tunnel (recommended)
-
-Vast's direct port mappings are plain HTTP to a random `IP:port` that changes
-with every instance. The image ships `cloudflared`: give it a tunnel token and
-the API gets a stable HTTPS hostname (e.g. `https://inference.nidora.ai`)
-independent of the pod's IP/port.
-
-One-time setup (Cloudflare dashboard, domain must be on Cloudflare):
-
-1. **Zero Trust → Networks → Tunnels → Create a tunnel** (type: Cloudflared),
-   name it e.g. `nidora-inference`, and copy the token from the install
-   command (`eyJ...`).
-2. On the tunnel's **Public Hostname** tab add: hostname
-   `inference.nidora.ai` → service `HTTP://localhost:8000`.
-3. Add to the template's Docker options:
-   ```
-   -e NIDORA_CF_TUNNEL_TOKEN=eyJ...
-   ```
-
-The tunnel is outbound-only — with it in place you can remove the `8000/tcp`
-port mapping entirely (nothing needs to reach the pod directly), and clients
-call `https://inference.nidora.ai/...` with the same `X-Api-Key` header.
-Keep `NIDORA_API_KEY` set: the hostname is public.
+- **Image**: `erenck/nidora-ai-inference:latest`
+- **Launch mode**: Docker ENTRYPOINT, args empty
+- **Volume**: 300 GB at `/workspace`
+- **Ports**: 8000/tcp (omit if tunnel-only)
+- **Environment**:
+  ```
+  -e API_KEY=<your-secret>
+  -e CF_TUNNEL_TOKEN=<token>      # optional: stable HTTPS hostname
+  -e SGLANG_EXTRA_ARGS=...        # optional tuning, see below
+  ```
 
 ## First boot
 
-The API comes up immediately; missing weights (~37 GB: Q6_K GGUF experts,
-base components, Lightning LoRAs) download in the background into `/models`
-— typically 5–15 min — then the model warms into RAM/VRAM
-(`NIDORA_WARMUP=wan22-i2v`). Jobs submitted meanwhile just queue behind the
-bootstrap. Every later boot skips the download and is generating-ready
-within a few minutes. Track it via `GET /health`: `activity` goes
-`downloading` → `loading:wan22-i2v` → `idle`; ready when
-`"loaded_pipeline": "wan22-i2v"`.
-
-**SageAttention** provisions itself in parallel: first boot on a volume/GPU
-combo compiles it for that GPU (~5–20 min, background), caches the wheel on
-the volume, and hot-reloads the pipeline — jobs run on sdpa until then,
-then speed up. Later boots install the cached wheel in seconds. Look for
-`attention backend: sage` in the logs; `NIDORA_BUILD_SAGE=0` disables.
+The server downloads the model snapshot into `/workspace/hf` (one-time per
+volume, ~126 GB — pick offers with high `inet_down`), loads and warms it
+(`--warmup-mode server`), then serves. Later boots skip the download and are
+ready in minutes. Readiness: `GET /health` answers once warmup is done.
 
 ## Usage
 
-Find the mapped public port on the instance card (the IP/port button —
-container port 8000 maps to a random host port), then:
+See [api.md](api.md). Short version:
 
-```
-curl http://<PUBLIC_IP>:<MAPPED_PORT>/health
-```
-
-Submit a job:
-
-```
-curl -X POST http://<PUBLIC_IP>:<MAPPED_PORT>/v1/jobs \
-  -H "X-Api-Key: <your-secret>" \
-  -H 'content-type: application/json' -d '{
-  "pipeline": "wan22-i2v",
-  "params": {
-    "image": "https://example.com/input.jpg",
-    "prompt": "the woman smiles and waves at the camera",
-    "resolution": "480p",
-    "seed": 42
-  }
-}'
+```bash
+curl -s http://<IP>:<PORT>/v1/videos \
+  -H "Authorization: Bearer $API_KEY" \
+  -F input_reference=@input.jpg \
+  -F prompt="the woman smiles and waves" \
+  -F size="480x832" -F seconds=5
+# poll GET /v1/videos/{id}; download /v1/videos/{id}/content
 ```
 
-Poll status / get the video:
+## Tuning (SGLANG_EXTRA_ARGS)
 
-```
-curl -H "X-Api-Key: <your-secret>" http://<PUBLIC_IP>:<MAPPED_PORT>/v1/jobs/<JOB_ID>
-# when state == "completed", download from artifacts[0].url:
-curl -H "X-Api-Key: <your-secret>" -O http://<PUBLIC_IP>:<MAPPED_PORT>/v1/outputs/<JOB_ID>/<JOB_ID>.mp4
-```
-
-Cancel: `DELETE /v1/jobs/<JOB_ID>`. List pipelines + full parameter schemas: `GET /v1/pipelines`. Load/unload the model explicitly: `POST /v1/pipelines/<NAME>/load` / `POST /v1/pipelines/<NAME>/unload`.
-
-## Key parameters (wan22-i2v)
-
-| Param | Default | Notes |
-|---|---|---|
-| `image` | — | URL, data URI, or base64 |
-| `prompt` | — | motion/scene description |
-| `resolution` | `480p` | target pixel budget (480×832 / 720×1280) |
-| `fit` | `preserve` | keep input aspect ratio at the largest size fitting the budget; `fixed` = exact 480×832 (`aspect_ratio` 9:16/16:9) |
-| `num_frames` | 81 | ~5 s at 16 fps |
-| `frames_per_second` | 16 | |
-| `num_inference_steps` | 4 | Lightning distilled |
-| `scheduler` | `euler` | or `unipc` |
-| `guidance_scale` / `_2` | 1.0 | per-expert CFG |
-| `sample_shift` | 5.0 | scheduler flow shift |
-| `boundary_ratio` | model config | expert handoff point (0–1) |
-| `lora_scale_transformer` / `_2` | 0.5 / 1.0 | per-expert LoRA strength (profile defaults) |
-| `crf` | 9 | mp4 quality (lower = better) |
-| `seed` | random | set for reproducibility |
+- `--attention-backend fa3` — FlashAttention-3 on Hopper
+- `--enable-torch-compile true` — slower warmup, faster steps
+- `--text-encoder-cpu-offload` — only if VRAM is tight
+- Multi-GPU: `--num-gpus N --enable-cfg-parallel`
 
 ## Tips
 
-- **Stop, don't destroy** — stopped instances keep their disk, so the weights
-  download happens once. (A stopped instance's GPU can be rented to someone
-  else; restart may briefly wait for a free GPU on that host.)
-- Prefer offers with high `inet_down` — the first boot pulls ~37 GB from
-  HuggingFace.
-- Outputs accumulate in `/outputs`; clean up old job folders periodically.
-- Image updates: destroy + recreate to pull the newest `latest`, or pin a
-  commit-SHA tag for reproducibility.
+- The volume outlives the instance — destroy/recreate pods freely, the
+  download happens once.
+- Keep `API_KEY` set: Vast IPs (and tunnel hostnames) are public.
+- Pin a commit-SHA image tag for reproducibility; `:latest` tracks main.
