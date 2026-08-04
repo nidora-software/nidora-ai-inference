@@ -1,16 +1,19 @@
 # Running on rented GPU pods
 
-The image is self-contained: SGLang Diffusion + pinned model config +
-optional Cloudflare Tunnel. A pod needs an 80 GB GPU, a persistent volume,
-and env vars — nothing else.
+The image is self-contained: SGLang Diffusion + optional Cloudflare Tunnel.
+A pod needs a suitable GPU for the served model, a persistent volume, and
+env vars — nothing else.
 
 ## Before you start
 
-- **GPU**: H100 or A100 **80 GB** (bf16 A14B). Smaller cards require SGLang
-  offload flags via `SGLANG_EXTRA_ARGS` and are unbenchmarked.
-- **Disk**: ≥ 300 GB persistent volume — the model snapshot (~126 GB)
-  downloads once into the volume's HF cache (`HF_HOME=/workspace/hf`).
-- **HF_TOKEN**: not needed (Wan and lightx2v repos are public).
+- **GPU**: sized by the served model — a bf16 14B-class video model wants
+  **80 GB** (H100/A100); smaller cards require SGLang offload flags via
+  `SGLANG_EXTRA_ARGS` at a latency cost. Check the model's
+  [cookbook page](https://docs.sglang.io/cookbook/diffusion/).
+- **Disk**: persistent volume sized for the model snapshot (e.g. ≥ 300 GB
+  for a ~126 GB snapshot) — it downloads once into the volume's HF cache
+  (`HF_HOME=/workspace/hf`).
+- **HF_TOKEN**: only needed for gated repos.
 
 ## Vast.ai
 
@@ -31,7 +34,7 @@ at `/workspace`, same env vars. RunPod's proxy provides HTTPS
 
 Direct pod IP:port is plain HTTP and changes per instance. With a Cloudflare
 Tunnel the API lives at a fixed hostname (e.g.
-`https://inference.nidora.ai`) regardless of provider networking:
+`https://inference.example.com`) regardless of provider networking:
 
 1. Cloudflare Zero Trust → Networks → Tunnels → create a `cloudflared`
    tunnel, copy the token.
@@ -55,9 +58,9 @@ edge before reaching the pod.
 ## Verify
 
 ```bash
-curl https://inference.nidora.ai/health   # ready once warmup completes
+curl https://<your-hostname>/health   # ready once warmup completes
 ```
 
 Then generate a clip per [api.md](api.md). Startup phases on first boot:
-model download (~126 GB, one-time per volume) → load + warmup → serving.
-Watch the container logs for progress.
+model download (one-time per volume) → load + warmup → serving. Watch the
+container logs for progress.

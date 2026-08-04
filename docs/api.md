@@ -24,7 +24,7 @@ Async: create → poll → download.
 
 ```bash
 # 1. Create (multipart; input_reference is the source image)
-curl -s https://inference.nidora.ai/v1/videos \
+curl -s https://<your-hostname>/v1/videos \
   -H "CF-Access-Client-Id: $CF_ACCESS_ID" \
   -H "CF-Access-Client-Secret: $CF_ACCESS_SECRET" \
   -F input_reference=@input.jpg \
@@ -39,12 +39,12 @@ image is already hosted.
 
 ```bash
 # 2. Poll until status == "completed"
-curl -s https://inference.nidora.ai/v1/videos/video_... \
+curl -s https://<your-hostname>/v1/videos/video_... \
   -H "CF-Access-Client-Id: $CF_ACCESS_ID" \
   -H "CF-Access-Client-Secret: $CF_ACCESS_SECRET"
 
 # 3. Download the mp4
-curl -s https://inference.nidora.ai/v1/videos/video_.../content \
+curl -s https://<your-hostname>/v1/videos/video_.../content \
   -H "CF-Access-Client-Id: $CF_ACCESS_ID" \
   -H "CF-Access-Client-Secret: $CF_ACCESS_SECRET" -o out.mp4
 ```

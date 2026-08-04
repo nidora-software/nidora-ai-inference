@@ -1,59 +1,56 @@
 # nidora-ai-inference
 
-Deployment layer for self-hosted **Wan 2.2 image-to-video** on rented GPU
-pods, served by [SGLang Diffusion](https://docs.sglang.io/diffusion/) —
-OpenAI-compatible async video API, LoRA loading, warmup, and performance
-tuning come from SGLang; this repo contributes the pinned Docker image, the
-launch configuration, and the deployment docs.
+Deployment layer for self-hosted media generation on rented GPU pods,
+served by [SGLang Diffusion](https://docs.sglang.io/diffusion/) — the
+OpenAI-compatible async API, model loading/warmup, LoRA support, and
+performance tuning come from SGLang; this repo contributes the pinned
+Docker image, the env-driven launch configuration, and the deployment docs.
+Any model family SGLang Diffusion supports can be served by pointing
+`MODEL_PATH` at its HuggingFace repo id (browse the
+[cookbook](https://docs.sglang.io/cookbook/diffusion/) for the catalog).
 
 - Image: `erenck/nidora-ai-inference:latest` (also on GHCR), built on
   `lmsysorg/sglang:v0.5.16-cu129` + `sglang[diffusion]`
-- Production config: `MODEL_PATH=Wan-AI/Wan2.2-I2V-A14B-Diffusers` +
-  `LORA_PATH=lightx2v/Wan2.2-Distill-Loras` (4-step Lightning distill) —
-  both env-driven, neither baked in
-- API: `POST /v1/videos` → poll → download; see [docs/api.md](docs/api.md)
+- API: `POST /v1/videos` → poll → download (and the image endpoints);
+  see [docs/api.md](docs/api.md)
 
-## Requirements
+## Configuration
 
-| Resource | Minimum | Notes |
+Everything is env-driven — no code changes to switch models or tune:
+
+| Env | Required | Purpose |
 |---|---|---|
-| GPU | **80 GB (H100/A100)** | bf16 A14B: 2×28 GB experts + ~11 GB text encoder resident |
-| System RAM | 64 GB+ | |
-| Disk | **300 GB** persistent volume | ~126 GB model snapshot in the HF cache + headroom |
-| Ports | HTTP 8000 | or a Cloudflare Tunnel (no open port needed) |
+| `MODEL_PATH` | **yes** | HF repo id or local path of the served model |
+| `LORA_PATH` | no | LoRA repo id/path; unset = no LoRA |
+| `PORT` | no | HTTP port (default 8000) |
+| `CF_TUNNEL_TOKEN` | no | Cloudflare Tunnel for a stable HTTPS hostname |
+| `SGLANG_EXTRA_ARGS` | no | extra `sglang serve` flags (attention backend, offload, torch compile, parallelism) |
 
-Smaller cards are possible via SGLang offload/quantization flags
-(`SGLANG_EXTRA_ARGS="--dit-layerwise-offload ..."`) at a latency cost —
-unbenchmarked, the 80 GB path is the supported one.
+Model weights are never baked into the image; they download once into the
+volume-backed HF cache (`HF_HOME=/workspace/hf`).
 
 ## Run
 
 ```bash
 docker run --gpus all -p 127.0.0.1:8000:8000 \
   -v /path/to/volume:/workspace \
-  -e MODEL_PATH=Wan-AI/Wan2.2-I2V-A14B-Diffusers \
-  -e LORA_PATH=lightx2v/Wan2.2-Distill-Loras \
+  -e MODEL_PATH=<org/model-repo> \
+  -e LORA_PATH=<org/lora-repo> \
   erenck/nidora-ai-inference:latest
 ```
 
-`MODEL_PATH` is required — the container refuses to start without it.
-`LORA_PATH` is optional with no default — but for Wan 2.2 you want the
-distill LoRA set, otherwise 4-step requests produce noise (the base model
-needs ~40+ steps).
+Hardware requirements depend on the served model (check its cookbook page).
+As a reference point, a bf16 14B-class video model wants an 80 GB GPU
+(H100/A100), 64 GB+ RAM, and a 300 GB volume; smaller cards can work via
+SGLang offload/quantization flags at a latency cost.
 
 **Security note**: the SGLang diffusion server has **no built-in API auth**
 — never expose the port publicly. Production deployments run tunnel-only
 with Cloudflare Access in front (see
 [docs/deploy-pods.md](docs/deploy-pods.md)).
 
-First boot downloads the model into `/workspace/hf` (one-time per volume),
-warms it up (`--warmup-mode server`), then serves. Configuration is
-env-driven — see [.env.sample](.env.sample); anything else goes through
-`SGLANG_EXTRA_ARGS` (attention backend, torch compile, offload,
-parallelism).
-
 Cloud pods: [docs/deploy-pods.md](docs/deploy-pods.md) (Vast.ai / RunPod
-recipes, Cloudflare Tunnel for a stable HTTPS hostname).
+recipes, Cloudflare Tunnel + Access setup).
 
 ## Layout
 
@@ -63,11 +60,5 @@ scripts/docker-entrypoint.sh # tunnel + `sglang serve` with env-driven flags
 docs/api.md                  # API usage for clients
 docs/deploy-pods.md          # pod deployment recipes
 docs/vastai-template-readme.md
+docs/runpod-template-readme.md
 ```
-
-## History
-
-Before 2026-08, this repo was a hand-rolled inference server (FastAPI job
-queue + diffusers pipeline with GGUF-quantized experts, 24 GB-card
-friendly). It was replaced wholesale by SGLang Diffusion; the old stack
-lives in git history if ever needed.
