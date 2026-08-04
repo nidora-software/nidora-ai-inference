@@ -12,7 +12,7 @@ served by SGLang Diffusion's OpenAI-compatible async video API.
 | Resource | Minimum | Notes |
 |---|---|---|
 | GPU | **H100 / A100 80 GB** | bf16 A14B needs ~70 GB resident for full speed |
-| System RAM | 64 GB+ | filter offers by CPU RAM |
+| System RAM | **128 GB+** | fp32 snapshot stages through RAM at load; Vast enforces the allocation as a hard limit — less gets OOM-killed (exit -9). Filter offers by CPU RAM. |
 | Disk | 20 GB container + **300 GB volume** at `/workspace` | ~126 GB model snapshot lives in the volume's HF cache |
 | Ports | 8000/tcp | optional with a Cloudflare Tunnel |
 | Host CUDA | ≥ 12.9 | set Min CUDA in the offer filter |

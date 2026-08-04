@@ -12,7 +12,7 @@ served by SGLang Diffusion's OpenAI-compatible async video API.
 | Resource | Minimum | Notes |
 |---|---|---|
 | GPU | **H100 / A100 80 GB** | bf16 A14B needs ~70 GB resident for full speed |
-| System RAM | 64 GB+ | |
+| System RAM | **128 GB+** | fp32 snapshot stages through RAM at load — less gets OOM-killed (exit -9) |
 | Volume | **300 GB** network volume at `/workspace` | ~126 GB model snapshot lives in the volume's HF cache |
 | Ports | HTTP 8000 | RunPod's proxy provides HTTPS |
 

@@ -22,7 +22,7 @@ Summary: image `erenck/nidora-ai-inference:latest`, Docker ENTRYPOINT mode,
 300 GB volume at `/workspace`, env `MODEL_PATH` (required) + `LORA_PATH`
 (needed for 4-step generation) + `CF_TUNNEL_TOKEN` (+ optional
 `SGLANG_EXTRA_ARGS`), no port mapping needed (tunnel-only). Filter offers:
-H100/A100 80 GB, CPU RAM ≥ 64 GB, Min CUDA 12.9, high `inet_down`.
+H100/A100 80 GB, CPU RAM ≥ 128 GB, Min CUDA 12.9, high `inet_down`.
 
 ## RunPod
 

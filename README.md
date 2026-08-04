@@ -41,7 +41,8 @@ docker run --gpus all -p 127.0.0.1:8000:8000 \
 
 Hardware requirements depend on the served model (check its cookbook page).
 As a reference point, a bf16 14B-class video model wants an 80 GB GPU
-(H100/A100), 64 GB+ RAM, and a 300 GB volume; smaller cards can work via
+(H100/A100), 128 GB+ system RAM (fp32 snapshots stage through RAM at
+load), and a 300 GB volume; smaller cards can work via
 SGLang offload/quantization flags at a latency cost.
 
 **Security note**: the SGLang diffusion server has **no built-in API auth**
