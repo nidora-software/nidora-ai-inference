@@ -1,0 +1,82 @@
+# Gateway + its Cloudflare Tunnel.
+#
+# Standalone:
+#
+#   docker compose -f deploy/compose.gateway.yml up -d
+#
+# Or as an overlay on an existing stack, so the two share a network. Pass the
+# other compose file first; its `name:` (or COMPOSE_PROJECT_NAME) decides the
+# project, and these services join it:
+#
+#   docker compose \
+#     -f /path/to/your/docker-compose.yml \
+#     -f deploy/compose.gateway.yml \
+#     up -d inference-gateway inference-cloudflared
+#
+# Required in .env — see deploy/README.md:
+#   INFERENCE_API_KEYS, INFERENCE_AGENT_SECRET, INFERENCE_CF_TUNNEL_TOKEN
+name: nidora-inference
+
+services:
+  inference-gateway:
+    image: ${INFERENCE_REGISTRY:-ghcr.io/nidora-software/nidora-ai-inference}/gateway:${INFERENCE_TAG:-latest}
+    build:
+      context: ../gateway
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      DATA_DIR: /data
+      LOG_LEVEL: ${INFERENCE_LOG_LEVEL:-info}
+
+      # Comma-separated so a key can be rotated without downtime: add the new
+      # one, move clients over, then drop the old one.
+      GATEWAY_API_KEYS: ${INFERENCE_API_KEYS:?set INFERENCE_API_KEYS}
+      AGENT_SHARED_SECRET: ${INFERENCE_AGENT_SECRET:?set INFERENCE_AGENT_SECRET}
+      ADMIN_KEYS: ${INFERENCE_ADMIN_KEYS:-}
+
+      # A pod that stops polling for this long loses its jobs to the queue.
+      LEASE_TTL_S: "120"
+      # Comfortably inside Cloudflare's 125s proxy read timeout.
+      MAX_POLL_WAIT_S: "25"
+      # Inside the consumer's own 20-minute deadline, so a doomed job returns a
+      # legible error rather than an opaque client-side timeout.
+      JOB_TTL_S: "1080"
+      MAX_ATTEMPTS: "2"
+
+      ARTIFACT_TTL_HOURS: "24"
+      JOB_RETENTION_DAYS: "7"
+      MAX_INPUT_BYTES: "20971520"
+      MAX_ARTIFACT_BYTES: "209715200"
+      # The client sends the input image as a base64 data URI, so the body is
+      # ~4/3 the image size. Fastify's 1 MB default would reject every request.
+      BODY_LIMIT_BYTES: "33554432"
+      MAX_QUEUE_DEPTH: ${INFERENCE_MAX_QUEUE_DEPTH:-200}
+    volumes:
+      - inference-data:/data
+    # A co-located stateful service is the real risk here: without a ceiling, a
+    # burst of large uploads makes the gateway the biggest RSS on the machine,
+    # and the OOM killer picks a neighbour instead of it.
+    mem_limit: ${INFERENCE_MEM_LIMIT:-1g}
+    # No published ports and no reverse-proxy labels: cloudflared reaches it
+    # over the compose network, so nothing is exposed on the host at all.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  inference-cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${INFERENCE_CF_TUNNEL_TOKEN:?set INFERENCE_CF_TUNNEL_TOKEN}
+    depends_on:
+      inference-gateway:
+        condition: service_healthy
+
+volumes:
+  inference-data:
