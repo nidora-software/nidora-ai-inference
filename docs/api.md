@@ -171,7 +171,7 @@ advertising an indefinite queue.
 | Status | Meaning |
 |---|---|
 | 400 | Bad parameters — `detail` says which |
-| 401 | Missing or wrong API key |
+| 401 | Missing or wrong credential. Always `{"detail":"invalid or missing API key"}`, including on the admin routes — a 401 never reveals which credential a route wants. |
 | 404 | Unknown video, or unknown `model` (with `available`) |
 | 409 | Cancelling a video that already finished, or downloading one that has not |
 | 410 | The content expired |

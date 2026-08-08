@@ -1,6 +1,6 @@
 {
   "name": "nidora-inference-gateway",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Queue-tracking gateway in front of SGLang Diffusion GPU pods",
   "license": "MIT",

@@ -12,6 +12,13 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import type { FastifyReply, FastifyRequest, preHandlerHookHandler } from 'fastify';
 
 /**
+ * The single rejection every client-facing route gives. Shared rather than
+ * repeated so a future route cannot reintroduce a message that describes which
+ * credential was missing.
+ */
+const UNAUTHORIZED = { detail: 'invalid or missing API key' } as const;
+
+/**
  * Constant-time comparison of two secrets of arbitrary length. Hashing first
  * normalises the length, which `timingSafeEqual` otherwise refuses to accept
  * (and whose length mismatch would itself leak a bit of information).
@@ -46,7 +53,7 @@ export function makeRequireApiKey(apiKeys: readonly string[]): preHandlerHookHan
   return function requireApiKey(request: FastifyRequest, reply: FastifyReply, done) {
     const key = requestKey(request);
     if (!key || !matchesAny(key, apiKeys)) {
-      reply.code(401).send({ detail: 'invalid or missing API key' });
+      reply.code(401).send(UNAUTHORIZED);
       return;
     }
     done();
@@ -68,6 +75,12 @@ export function makeRequireAgentSecret(secret: string): preHandlerHookHandler {
  * Admin routes accept a dedicated admin key, falling back to any client API key
  * when no admin key is configured — a single-operator deployment shouldn't be
  * forced to invent a second secret.
+ *
+ * The rejection is deliberately the *same* message the client API gives. An
+ * unauthenticated prober should not learn from a 401 that a separate,
+ * more-privileged credential exists on this deployment: that is a free hint
+ * about which surface is worth attacking, and it costs an operator nothing,
+ * since anyone entitled to an admin key was told about it out of band.
  */
 export function makeRequireAdminKey(
   adminKeys: readonly string[],
@@ -80,7 +93,7 @@ export function makeRequireAdminKey(
         ? (request.headers['x-admin-key'] as string)
         : requestKey(request);
     if (!key || !matchesAny(key, accepted)) {
-      reply.code(401).send({ detail: 'invalid or missing admin key' });
+      reply.code(401).send(UNAUTHORIZED);
       return;
     }
     done();

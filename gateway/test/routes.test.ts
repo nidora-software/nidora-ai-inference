@@ -100,6 +100,29 @@ describe('auth', () => {
     assert.equal(safeEqual('', ''), true);
   });
 
+  it('never tells an unauthenticated caller that an admin credential exists', async () => {
+    // A distinct "invalid or missing admin key" on /v1/pods would hand a prober
+    // the one fact worth having: which surface carries the privileged key.
+    const routes = [
+      ['GET', '/v1/videos'],
+      ['GET', '/v1/models'],
+      ['GET', '/v1/pods'],
+      ['POST', '/v1/pods/p1/drain'],
+    ] as const;
+
+    for (const [method, url] of routes) {
+      for (const headers of [{}, { 'x-api-key': 'nope' }, { 'x-admin-key': 'nope' }]) {
+        const res = await h.app.inject({ method, url, headers });
+        assert.equal(res.statusCode, 401, `${method} ${url} must reject`);
+        assert.deepEqual(
+          res.json(),
+          { detail: 'invalid or missing API key' },
+          `${url} must not describe which credential was missing`,
+        );
+      }
+    }
+  });
+
   it('leaves /health open so probes and the tunnel work', async () => {
     const res = await h.app.inject({ method: 'GET', url: '/health' });
     assert.equal(res.statusCode, 200);

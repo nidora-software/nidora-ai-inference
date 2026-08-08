@@ -19,7 +19,7 @@ import modelRoutes from './routes/models.js';
 import podRoutes from './routes/pods.js';
 import type { Db } from './db/sqlite.js';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 
 export interface BuiltApp {
   app: FastifyInstance;
