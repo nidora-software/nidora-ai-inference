@@ -13,6 +13,12 @@ import type { Resolution } from './sizing.js';
 export interface PipelineSpec {
   /** Which SGLang endpoint fulfils this pipeline. */
   endpoint: string;
+  /**
+   * The models that can serve this pipeline, as HF repo ids. A pod advertises
+   * the `MODEL_PATH` it actually loaded and the gateway looks it up here — the
+   * pod does not get to claim a capability its weights don't have.
+   */
+  models: readonly string[];
   resolutions: readonly Resolution[];
   defaults: {
     seconds: number;
@@ -40,6 +46,7 @@ const WAN22_NEGATIVE_PROMPT =
 export const PIPELINES: Record<string, PipelineSpec> = {
   'wan22-i2v': {
     endpoint: '/v1/videos',
+    models: ['Wan-AI/Wan2.2-I2V-A14B-Diffusers'],
     resolutions: ['480p', '720p'],
     defaults: { seconds: 5, num_inference_steps: 4, guidance_scale: 1.0 },
     limits: { maxSeconds: 10, maxSteps: 12 },
@@ -55,6 +62,34 @@ export function getPipeline(name: unknown): PipelineSpec | null {
 
 export function pipelineNames(): string[] {
   return Object.keys(PIPELINES);
+}
+
+/**
+ * A model path identifies the same weights whether it arrived as an HF repo id
+ * (`Wan-AI/Wan2.2-I2V-A14B-Diffusers`) or as the local directory SGLang was
+ * pointed at (`/workspace/models/Wan2.2-I2V-A14B-Diffusers`), so only the last
+ * segment is compared.
+ */
+function modelKey(path: string): string {
+  const segments = path.split('/').filter(Boolean);
+  return (segments[segments.length - 1] ?? '').toLowerCase();
+}
+
+/**
+ * Which pipelines a pod serving `modelPath` can run.
+ *
+ * Derived rather than self-declared: a pod that had to name its own pipelines
+ * could name one its weights can't do — a typo in an env var then routes every
+ * job of that pipeline to a pod that fails all of them. An unrecognised model
+ * contributes no capacity at all, which is the safe direction to be wrong in.
+ */
+export function pipelinesForModel(modelPath: string | null): string[] {
+  if (!modelPath) return [];
+  const key = modelKey(modelPath);
+  if (!key) return [];
+  return Object.entries(PIPELINES)
+    .filter(([, spec]) => spec.models.some((model) => modelKey(model) === key))
+    .map(([name]) => name);
 }
 
 export function clamp(value: number, min: number, max: number): number {

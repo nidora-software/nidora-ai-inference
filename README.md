@@ -81,7 +81,6 @@ Everything is env-driven — no code changes to switch models or tune:
 | `GATEWAY_AGENT_SECRET` | gateway mode | Shared secret for the agent control plane |
 | `CF_ACCESS_CLIENT_ID` / `_SECRET` | gateway mode | Cloudflare Access service token |
 | `POD_ID` | no | Stable pod identity; auto-detected from the provider |
-| `AGENT_PIPELINES` | no | Which pipelines this pod serves (default `wan22-i2v`) |
 | `AGENT_MAX_IN_FLIGHT` | no | Concurrent jobs (default 1 — SGLang serialises on the GPU) |
 | `CF_TUNNEL_TOKEN` | standalone mode | Cloudflare Tunnel, for running a pod as its own endpoint |
 

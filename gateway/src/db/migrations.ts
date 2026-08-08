@@ -53,7 +53,6 @@ export const MIGRATIONS: Migration[] = [
         agent_version   TEXT,
         model_path      TEXT,
         lora_path       TEXT,
-        pipelines       TEXT NOT NULL DEFAULT '[]',
         gpu             TEXT,
         max_in_flight   INTEGER NOT NULL DEFAULT 1,
         sglang_ready    INTEGER NOT NULL DEFAULT 0,

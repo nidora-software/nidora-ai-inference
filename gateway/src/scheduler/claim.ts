@@ -67,6 +67,9 @@ export function assignmentFor(job: Job, leaseId: string): Assignment {
 /**
  * Claim up to `slots` queued jobs for `pod`.
  *
+ * What the pod serves comes from its `model_path`, not from anything it claims
+ * about itself — the weights it loaded decide what it can run.
+ *
  * The loop deliberately *continues* past a job the pod can't run rather than
  * stopping: a queued job for a pipeline this pod doesn't serve must not
  * head-of-line-block one it does.

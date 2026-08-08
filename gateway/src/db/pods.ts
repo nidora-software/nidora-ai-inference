@@ -8,6 +8,7 @@
  */
 import type { Db } from './sqlite.js';
 import type { Pod } from '../domain/types.js';
+import { pipelinesForModel } from '../domain/pipelines.js';
 
 interface PodRow {
   pod_id: string;
@@ -17,7 +18,6 @@ interface PodRow {
   agent_version: string | null;
   model_path: string | null;
   lora_path: string | null;
-  pipelines: string;
   gpu: string | null;
   max_in_flight: number;
   sglang_ready: number;
@@ -35,7 +35,10 @@ function hydrate(row: PodRow): Pod {
     agent_version: row.agent_version,
     model_path: row.model_path,
     lora_path: row.lora_path,
-    pipelines: JSON.parse(row.pipelines) as string[],
+    // Derived, not stored: the registry is the authority on what a model can
+    // run, so adding a pipeline to an existing model takes effect immediately
+    // instead of waiting for every pod to re-register.
+    pipelines: pipelinesForModel(row.model_path),
     gpu: row.gpu,
     max_in_flight: row.max_in_flight,
     sglang_ready: row.sglang_ready === 1,
@@ -51,7 +54,6 @@ export interface PodHeartbeat {
   agent_version: string | null;
   model_path: string | null;
   lora_path: string | null;
-  pipelines: string[];
   gpu: string | null;
   max_in_flight: number;
   sglang_ready: boolean;
@@ -65,9 +67,9 @@ export class PodStore {
     this.db
       .prepare(
         `INSERT INTO pods (pod_id, session_id, first_seen_at, last_seen_at, agent_version,
-                           model_path, lora_path, pipelines, gpu, max_in_flight, sglang_ready)
+                           model_path, lora_path, gpu, max_in_flight, sglang_ready)
          VALUES (@pod_id, @session_id, @now, @now, @agent_version,
-                 @model_path, @lora_path, @pipelines, @gpu, @max_in_flight, @sglang_ready)
+                 @model_path, @lora_path, @gpu, @max_in_flight, @sglang_ready)
          ON CONFLICT(pod_id) DO UPDATE SET
            -- session_id is assigned once and kept: it identifies the pod's
            -- registration, not the individual poll.
@@ -75,7 +77,6 @@ export class PodStore {
            agent_version = excluded.agent_version,
            model_path    = excluded.model_path,
            lora_path     = excluded.lora_path,
-           pipelines     = excluded.pipelines,
            gpu           = excluded.gpu,
            max_in_flight = excluded.max_in_flight,
            sglang_ready  = excluded.sglang_ready`,
@@ -87,7 +88,6 @@ export class PodStore {
         agent_version: hb.agent_version,
         model_path: hb.model_path,
         lora_path: hb.lora_path,
-        pipelines: JSON.stringify(hb.pipelines),
         gpu: hb.gpu,
         max_in_flight: hb.max_in_flight,
         sglang_ready: hb.sglang_ready ? 1 : 0,

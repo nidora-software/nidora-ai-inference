@@ -23,11 +23,6 @@ def _int(name: str, default: int) -> int:
         raise SystemExit(f"[agent] {name} must be an integer, got {raw!r}") from exc
 
 
-def _csv(name: str, default: str) -> list[str]:
-    raw = os.environ.get(name) or default
-    return [item.strip() for item in raw.split(",") if item.strip()]
-
-
 def detect_pod_id() -> str:
     """A stable identity across agent restarts.
 
@@ -48,7 +43,6 @@ class Config:
     gateway_url: str
     agent_secret: str
     pod_id: str
-    pipelines: list[str]
     max_in_flight: int
     sglang_url: str
     model_path: str | None
@@ -96,7 +90,6 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         gateway_url=gateway_url,
         agent_secret=secret,
         pod_id=detect_pod_id(),
-        pipelines=_csv("AGENT_PIPELINES", "wan22-i2v"),
         max_in_flight=max(1, _int("AGENT_MAX_IN_FLIGHT", 1)),
         sglang_url=env.get("SGLANG_URL") or f"http://127.0.0.1:{port}",
         model_path=env.get("MODEL_PATH"),

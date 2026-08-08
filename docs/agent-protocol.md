@@ -42,7 +42,6 @@ for free.
 {
   "pod_id": "runpod-abc123",
   "agent_version": "0.1.0",
-  "pipelines": ["wan22-i2v"],
   "max_in_flight": 1,
   "model_path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
   "lora_path": "lightx2v/Wan2.2-Distill-Loras",
@@ -59,6 +58,11 @@ for free.
 `sglang_ready` is the agent's own `GET /health` result against its local SGLang
 server, re-checked every cycle. While it is false the gateway assigns nothing —
 see [gateway.md](gateway.md#readiness-is-not-liveness).
+
+The pod does **not** say which pipelines it serves. `model_path` is what it
+loaded, and the gateway resolves that against its pipeline registry — a pod
+cannot claim a capability its weights don't have, and a mistyped model simply
+takes no work instead of failing every job it is sent.
 
 `pod_id` **must be stable across restarts**, or a pod orphans its own in-flight
 work instead of reclaiming it. The agent derives it from `POD_ID`,

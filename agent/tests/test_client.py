@@ -38,14 +38,13 @@ async def test_reports_sglang_as_not_ready_while_the_model_loads(fake_gateway, f
 
 async def test_advertises_its_capabilities_on_every_poll(fake_gateway, fake_sglang):
     async with serve(fake_gateway.app) as gw, serve(fake_sglang.app) as sg:
-        agent = Agent(make_config(gw, sg, pipelines=["wan22-i2v", "other"], max_in_flight=2))
+        agent = Agent(make_config(gw, sg, max_in_flight=2))
         await drive(agent)
 
     poll = fake_gateway.polls[0]
     assert poll["pod_id"] == "pod-test"
-    assert poll["pipelines"] == ["wan22-i2v", "other"]
     assert poll["max_in_flight"] == 2
-    assert poll["model_path"] == "mock/model"
+    assert poll["model_path"] == "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
     assert poll["gpu"] == "mock-gpu"
 
 

@@ -62,6 +62,25 @@ describe('scheduling', () => {
     assert.equal(warm.assign[0].job_id, id);
   });
 
+  it('derives what a pod serves from its model rather than its say-so', async () => {
+    const id = await create();
+
+    // A pod whose weights the registry doesn't recognise is not capacity, no
+    // matter how healthy its agent looks.
+    const unknown = await poll({ pod_id: 'pod-unknown', model_path: 'someone/some-other-model' });
+    assert.deepEqual(unknown.assign, []);
+    assert.deepEqual(h.ctx.pods.get('pod-unknown')!.pipelines, []);
+
+    // The same weights reached by local path are the same weights.
+    const local = await poll({
+      pod_id: 'pod-local',
+      model_path: '/workspace/models/Wan2.2-I2V-A14B-Diffusers',
+    });
+    assert.deepEqual(h.ctx.pods.get('pod-local')!.pipelines, ['wan22-i2v']);
+    assert.equal(local.assign.length, 1);
+    assert.equal(local.assign[0].job_id, id);
+  });
+
   it('does not let a job for an unserved pipeline block one the pod can run', async () => {
     // Queue a job whose pipeline nothing serves, then a runnable one behind it.
     const blocked = h.ctx.jobs.create({
@@ -215,7 +234,7 @@ describe('scheduling', () => {
       first_seen_at: 0,
       last_seen_at: 0,
       agent_version: null,
-      model_path: null,
+      model_path: 'Wan-AI/Wan2.2-I2V-A14B-Diffusers',
       lora_path: null,
       pipelines: ['wan22-i2v'],
       gpu: null,

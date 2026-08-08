@@ -49,15 +49,15 @@ Env for a pod joining the fleet:
 | `GATEWAY_AGENT_SECRET` | the fleet's agent secret |
 | `CF_ACCESS_CLIENT_ID` | `<service-token-id>.access` |
 | `CF_ACCESS_CLIENT_SECRET` | the service token secret |
-| `AGENT_PIPELINES` | `wan22-i2v` (comma-separated if the pod serves several) |
 | `AGENT_MAX_IN_FLIGHT` | `1` — SGLang serialises on the GPU anyway |
 | `POD_ID` | optional; auto-detected from `RUNPOD_POD_ID` / `VAST_CONTAINER_ID` / hostname |
 
 Leave `CF_TUNNEL_TOKEN` unset and publish no ports.
 
-> `AGENT_PIPELINES` must match what the pod's `MODEL_PATH` can actually do —
-> the gateway matches jobs on this string and does not verify it. A typo routes
-> work to the wrong model, which is worse than a startup error.
+> What the pod serves is derived from `MODEL_PATH`: the gateway looks the
+> model up in its pipeline registry and dispatches only the pipelines that
+> model can run. A pod loading a model the gateway doesn't know takes no work
+> at all — check `/v1/pods` if a pod stays idle.
 
 > `POD_ID` must be **stable across restarts**. A value that changes every boot
 > makes a restarting pod orphan its own in-flight work instead of reclaiming it.
@@ -124,6 +124,6 @@ gateway's job API.
 |---|---|
 | Pod never appears in `/v1/pods` | Agent can't reach the gateway. Usually a missing Access service token — the edge returns a login redirect, not a 401. Check the container logs for the agent's poll errors. |
 | Pod appears but `sglang_ready` stays false | Model still loading (normal for ~10 min), or the server is OOM-looping at load. Check `docker logs` for exit code -9 and confirm ≥ 128 GB system RAM. |
-| Jobs stay `queued` with a ready pod | Pipeline mismatch: the job's `pipeline` is not in the pod's `AGENT_PIPELINES`. |
+| Jobs stay `queued` with a ready pod | Pipeline mismatch: the job's `pipeline` is not one the pod's `MODEL_PATH` serves. `/v1/pods` shows the derived list — an empty `pipelines` means the gateway does not recognise that model. |
 | Jobs fail with `pod lost during generation` | The pod stopped polling for longer than the lease TTL — it was destroyed, lost network, or its agent died. |
 | Container exits right after start | A supervised process failed. The entrypoint logs which one before stopping the rest. |

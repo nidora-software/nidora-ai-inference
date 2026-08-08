@@ -36,7 +36,6 @@ first-boot time.
   -e GATEWAY_AGENT_SECRET=<fleet agent secret>
   -e CF_ACCESS_CLIENT_ID=<service-token-id>.access
   -e CF_ACCESS_CLIENT_SECRET=<service-token-secret>
-  -e AGENT_PIPELINES=wan22-i2v
   -e SGLANG_EXTRA_ARGS=...                         # optional tuning, see below
   ```
 

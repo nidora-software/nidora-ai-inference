@@ -49,7 +49,9 @@ services:
       GATEWAY_AGENT_SECRET: e2e-agent-secret
       SGLANG_URL: http://mock-sglang:8000
       POD_ID: e2e-pod-1
-      AGENT_PIPELINES: wan22-i2v
+      # What this pod serves is derived from the model it advertises, so the
+      # fake SGLang has to stand in for a real Wan 2.2 pod by name.
+      MODEL_PATH: Wan-AI/Wan2.2-I2V-A14B-Diffusers
       AGENT_MAX_IN_FLIGHT: "1"
       AGENT_POLL_WAIT_S: "5"
       AGENT_LOG_LEVEL: INFO

@@ -31,7 +31,6 @@ gateway and pull work from it — no inbound networking required.
   GATEWAY_AGENT_SECRET=<fleet agent secret>
   CF_ACCESS_CLIENT_ID=<service-token-id>.access
   CF_ACCESS_CLIENT_SECRET=<service-token-secret>
-  AGENT_PIPELINES=wan22-i2v
   SGLANG_EXTRA_ARGS=                            # optional tuning
   ```
 

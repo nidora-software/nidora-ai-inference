@@ -83,7 +83,6 @@ class Agent:
         body = {
             "pod_id": self.config.pod_id,
             "agent_version": AGENT_VERSION,
-            "pipelines": self.config.pipelines,
             "max_in_flight": self.config.max_in_flight,
             "model_path": self.config.model_path,
             "lora_path": self.config.lora_path,

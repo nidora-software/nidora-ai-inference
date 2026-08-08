@@ -74,6 +74,7 @@ export interface Pod {
   agent_version: string | null;
   model_path: string | null;
   lora_path: string | null;
+  /** Derived from `model_path` via the pipeline registry; never self-reported. */
   pipelines: string[];
   gpu: string | null;
   max_in_flight: number;

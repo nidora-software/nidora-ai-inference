@@ -42,7 +42,6 @@ interface InFlightReport {
 interface PollBody {
   pod_id?: unknown;
   agent_version?: unknown;
-  pipelines?: unknown;
   max_in_flight?: unknown;
   model_path?: unknown;
   lora_path?: unknown;
@@ -95,9 +94,6 @@ export default async function agentRoutes(
     const podId = str(body.pod_id);
     if (!podId) return reply.code(400).send({ detail: 'pod_id is required' });
 
-    const pipelines = Array.isArray(body.pipelines)
-      ? body.pipelines.filter((p): p is string => typeof p === 'string')
-      : [];
     const now = Date.now();
 
     const pod = pods.touch(
@@ -107,7 +103,6 @@ export default async function agentRoutes(
         agent_version: str(body.agent_version),
         model_path: str(body.model_path),
         lora_path: str(body.lora_path),
-        pipelines,
         gpu: str(body.gpu),
         max_in_flight: Math.max(
           1,

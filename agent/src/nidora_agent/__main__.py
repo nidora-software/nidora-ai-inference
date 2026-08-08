@@ -18,11 +18,11 @@ async def _main() -> None:
     )
     log = logging.getLogger("nidora_agent")
     log.info(
-        "starting v%s pod=%s gateway=%s pipelines=%s sglang=%s",
+        "starting v%s pod=%s gateway=%s model=%s sglang=%s",
         AGENT_VERSION,
         config.pod_id,
         config.gateway_url,
-        ",".join(config.pipelines),
+        config.model_path or "unset",
         config.sglang_url,
     )
 

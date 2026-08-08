@@ -100,7 +100,7 @@ export function pollBody(overrides: Record<string, unknown> = {}) {
   return {
     pod_id: 'pod-a',
     agent_version: '0.1.0',
-    pipelines: ['wan22-i2v'],
+    model_path: 'Wan-AI/Wan2.2-I2V-A14B-Diffusers',
     max_in_flight: 1,
     sglang_ready: true,
     in_flight: [],
