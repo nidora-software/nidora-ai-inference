@@ -20,13 +20,13 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import {
   agentHeaders,
   authHeaders,
-  createJobBody,
+  submit,
+  registerPod,
   makeHarness,
   pollBody,
   type Harness,
 } from './helpers.js';
 import { isSafeFilename } from '../src/domain/filenames.js';
-import { artifactUrl } from '../src/domain/serialize.js';
 
 /** Paths that must never reach a client, with what each would have reached. */
 const TRAVERSALS: Array<[string, string]> = [
@@ -53,12 +53,9 @@ describe('artifact filename traversal', () => {
   });
 
   async function claimJob(podId = 'pod-a') {
-    const created = await h.app.inject({
-      method: 'POST',
-      url: '/v1/jobs',
-      headers: authHeaders,
-      payload: createJobBody(),
-    });
+    await registerPod(h, { pod_id: podId });
+    const created = await submit(h);
+    assert.equal(created.statusCode, 200, JSON.stringify(created.json()));
     const id = created.json().id as string;
     const poll = await h.app.inject({
       method: 'POST',
@@ -86,14 +83,14 @@ describe('artifact filename traversal', () => {
         `filename ${JSON.stringify(filename)} must be refused (would reach ${reach})`,
       );
 
-      // And the job must not have been marked completed with a poisoned URL.
-      const job = await h.app.inject({
+      // And the video must not have been marked completed off the back of it.
+      const video = await h.app.inject({
         method: 'GET',
-        url: `/v1/jobs/${id}`,
+        url: `/v1/videos/${id}`,
         headers: authHeaders,
       });
-      assert.equal(job.json().state, 'running');
-      assert.deepEqual(job.json().artifacts, []);
+      assert.equal(video.json().status, 'in_progress');
+      assert.deepEqual(h.ctx.jobs.get(id)!.artifacts, []);
     }
   });
 
@@ -114,7 +111,7 @@ describe('artifact filename traversal', () => {
     }
   });
 
-  it('never emits an artifact URL outside the job’s own output path', async () => {
+  it('never puts a pod-supplied filename in front of a client at all', async () => {
     const { id, leaseId } = await claimJob();
     await h.app.inject({
       method: 'POST',
@@ -129,19 +126,27 @@ describe('artifact filename traversal', () => {
       payload: { state: 'completed' },
     });
 
-    const job = await h.app.inject({
+    // The original bug needed a filename to travel from the pod, through the
+    // video object, into a URL the backend fetched. The video object no longer
+    // carries one: content lives at a fixed path derived from the id, so there
+    // is nothing for a malicious filename to steer.
+    const video = await h.app.inject({
       method: 'GET',
-      url: `/v1/jobs/${id}`,
+      url: `/v1/videos/${id}`,
       headers: authHeaders,
     });
-    const url = job.json().artifacts[0].url as string;
-    assert.equal(url, `/v1/outputs/${id}/output.mp4`);
+    const body = video.json();
+    assert.equal(body.artifacts, undefined, 'no artifact list, so no pod-controlled URL');
+    assert.equal(
+      JSON.stringify(body).includes('output.mp4'),
+      false,
+      'no filename should appear in the client payload',
+    );
 
-    // The consumer resolves this against its configured host. Assert the same
-    // way it does — WHATWG URL parsing — so a traversal could not survive
-    // normalisation into a different path.
-    const resolved = new URL(url, 'https://inference.example.com');
-    assert.equal(resolved.pathname, `/v1/outputs/${id}/output.mp4`);
+    // The consumer resolves the content path against its configured host.
+    // Assert the same way it does — WHATWG URL parsing.
+    const resolved = new URL(`/v1/videos/${id}/content`, 'https://inference.example.com');
+    assert.equal(resolved.pathname, `/v1/videos/${id}/content`);
   });
 
   it('still accepts ordinary filenames', async () => {
@@ -163,7 +168,7 @@ describe('artifact filename traversal', () => {
 
       const download = await h.app.inject({
         method: 'GET',
-        url: `/v1/outputs/${id}/${filename}`,
+        url: `/v1/videos/${id}/content`,
         headers: authHeaders,
       });
       assert.equal(download.statusCode, 200);
@@ -217,13 +222,28 @@ describe('isSafeFilename', () => {
   });
 });
 
-describe('artifactUrl', () => {
-  it('percent-encodes both segments as a second layer', () => {
-    // Callers validate first; this guarantees a future caller that forgets
-    // produces an escaped, harmless URL rather than a traversal.
-    assert.equal(artifactUrl('j_abc', '../../jobs'), '/v1/outputs/j_abc/..%2F..%2Fjobs');
-    assert.equal(new URL(artifactUrl('j_abc', '../../jobs'), 'https://h').pathname,
-      '/v1/outputs/j_abc/..%2F..%2Fjobs');
-    assert.equal(artifactUrl('j_abc', 'output.mp4'), '/v1/outputs/j_abc/output.mp4');
+describe('content addressing', () => {
+  let h: Harness;
+  beforeEach(async () => {
+    h = await makeHarness();
+  });
+  afterEach(async () => {
+    await h.cleanup();
+  });
+
+  it('resolves content by video id, so a client never supplies a path segment', async () => {
+    // The old `/v1/outputs/:jobId/:filename` route took two attacker-influenced
+    // segments. This one takes an id that has to match a row we wrote.
+    for (const target of [
+      '/v1/videos/..%2f..%2fetc%2fpasswd/content',
+      '/v1/videos/%2e%2e%2f%2e%2e/content',
+      '/v1/videos/video_aaaaaaaaaaaa/content',
+    ]) {
+      const res = await h.app.inject({ method: 'GET', url: target, headers: authHeaders });
+      assert.ok(
+        res.statusCode === 404 || res.statusCode === 400,
+        `${target} must not be served (got ${res.statusCode})`,
+      );
+    }
   });
 });

@@ -25,7 +25,6 @@ import type { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import type { AppContext } from '../context.js';
 import { claimForPod, freeSlots, type Assignment } from '../scheduler/claim.js';
-import { artifactUrl } from '../domain/serialize.js';
 import { isSafeFilename } from '../domain/filenames.js';
 import { newSessionId } from '../lib/ids.js';
 import { ArtifactTooLarge } from '../artifacts/store.js';
@@ -287,17 +286,15 @@ export default async function agentRoutes(
     const now = Date.now();
 
     if (body.state === 'completed') {
-      // SECURITY: this filename becomes a URL the product backend fetches with
-      // its own API key and Cloudflare Access token. Left unvalidated, a pod
-      // could report `../../jobs` — `new URL()` collapses the traversal before
-      // the client's host check, so the pin still passes and the backend is
-      // steered into reading arbitrary gateway paths on the pod's behalf.
+      // SECURITY: this filename becomes a path segment on the gateway's disk
+      // when the content is served back. A pod is a realistic adversary — it
+      // runs on rented hardware — so `../../` here must never resolve outside
+      // the job's own artifact directory.
       const filename = body.filename === undefined ? 'output.mp4' : body.filename;
       if (!isSafeFilename(filename)) {
         return reply.code(400).send({ detail: 'invalid filename' });
       }
       const artifact: Artifact = {
-        url: artifactUrl(job.id, filename),
         media_type: 'video/mp4',
         filename,
         ...(typeof body.bytes === 'number' ? { bytes: body.bytes } : {}),

@@ -7,9 +7,11 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import {
   agentHeaders,
   authHeaders,
-  createJobBody,
+  submit,
+  registerPod,
   makeHarness,
   pollBody,
+  MODEL,
   type Harness,
 } from './helpers.js';
 import { freeSlots } from '../src/scheduler/claim.js';
@@ -26,14 +28,15 @@ describe('scheduling', () => {
     await h.cleanup();
   });
 
-  const create = async (overrides = {}) => {
-    const res = await h.app.inject({
-      method: 'POST',
-      url: '/v1/jobs',
-      headers: authHeaders,
-      payload: createJobBody(overrides),
-    });
-    assert.equal(res.statusCode, 202);
+  /**
+   * Creating a video needs a pod serving the model, so every case registers one
+   * first. `sglang_ready: false` keeps that pod from claiming what it created —
+   * capacity that is warming counts for admission, not for dispatch.
+   */
+  const create = async (overrides: Record<string, string> = {}) => {
+    await registerPod(h, { pod_id: 'pod-admission', sglang_ready: false });
+    const res = await submit(h, overrides);
+    assert.equal(res.statusCode, 200, JSON.stringify(res.json()));
     return res.json().id as string;
   };
 
@@ -69,23 +72,23 @@ describe('scheduling', () => {
     // matter how healthy its agent looks.
     const unknown = await poll({ pod_id: 'pod-unknown', model_path: 'someone/some-other-model' });
     assert.deepEqual(unknown.assign, []);
-    assert.deepEqual(h.ctx.pods.get('pod-unknown')!.pipelines, []);
+    assert.equal(h.ctx.pods.get('pod-unknown')!.model, null);
 
     // The same weights reached by local path are the same weights.
     const local = await poll({
       pod_id: 'pod-local',
       model_path: '/workspace/models/Wan2.2-I2V-A14B-Diffusers',
     });
-    assert.deepEqual(h.ctx.pods.get('pod-local')!.pipelines, ['wan22-i2v']);
+    assert.equal(h.ctx.pods.get('pod-local')!.model, MODEL);
     assert.equal(local.assign.length, 1);
     assert.equal(local.assign[0].job_id, id);
   });
 
-  it('does not let a job for an unserved pipeline block one the pod can run', async () => {
-    // Queue a job whose pipeline nothing serves, then a runnable one behind it.
+  it('does not let a job for an unserved model block one the pod can run', async () => {
+    // Queue a job for a model nothing serves, then a runnable one behind it.
     const blocked = h.ctx.jobs.create({
-      id: 'j_blockedblocked',
-      pipeline: 'some-other-pipeline',
+      id: 'video_blockedblock',
+      model: 'someone/some-other-model',
       params: {
         prompt: 'x',
         negative_prompt: '',
@@ -145,13 +148,13 @@ describe('scheduling', () => {
     });
     assert.deepEqual(after.assign, []);
     assert.equal(after.drain, true);
-    assert.equal(h.ctx.jobs.get(first)!.state, 'running', 'draining must not abandon live work');
+    assert.equal(h.ctx.jobs.get(first)!.state, 'in_progress', 'draining must not abandon live work');
   });
 
-  it('keeps a job queued when no pod exists, and reports the wait', async () => {
+  it('keeps a job queued while its pod is still warming, and reports the wait', async () => {
     const id = await create();
-    const job = await h.app.inject({ method: 'GET', url: `/v1/jobs/${id}`, headers: authHeaders });
-    assert.equal(job.json().state, 'queued');
+    const job = await h.app.inject({ method: 'GET', url: `/v1/videos/${id}`, headers: authHeaders });
+    assert.equal(job.json().status, 'queued');
     assert.equal(job.json().queue_position, 0);
 
     const health = await h.app.inject({ method: 'GET', url: '/health' });
@@ -179,33 +182,35 @@ describe('scheduling', () => {
       Date.now(),
     );
 
-    const job = await h.app.inject({ method: 'GET', url: `/v1/jobs/${id}`, headers: authHeaders });
-    assert.equal(job.json().state, 'failed');
-    assert.match(job.json().error, /exceeded its .* deadline \(queued .*, running .*\)/);
+    const job = await h.app.inject({ method: 'GET', url: `/v1/videos/${id}`, headers: authHeaders });
+    assert.equal(job.json().status, 'failed');
+    assert.match(job.json().error.message, /exceeded its .* deadline \(queued .*, running .*\)/);
   });
 
   it('refuses new work once the queue is past its ceiling', async () => {
     const small = await makeHarness({ MAX_QUEUE_DEPTH: '1' });
     try {
-      const first = await small.app.inject({
-        method: 'POST',
-        url: '/v1/jobs',
-        headers: authHeaders,
-        payload: createJobBody(),
-      });
-      assert.equal(first.statusCode, 202);
+      await registerPod(small, { sglang_ready: false });
 
-      const rejected = await small.app.inject({
-        method: 'POST',
-        url: '/v1/jobs',
-        headers: authHeaders,
-        payload: createJobBody(),
-      });
+      const first = await submit(small);
+      assert.equal(first.statusCode, 200);
+
+      const rejected = await submit(small);
       assert.equal(rejected.statusCode, 503);
       assert.equal(rejected.headers['retry-after'], '30');
+      assert.match(rejected.json().detail, /queue is full/);
     } finally {
       await small.cleanup();
     }
+  });
+
+  it('refuses work outright when no pod is serving the model at all', async () => {
+    // Nothing registered: the video could only sit in the queue until its
+    // deadline, so a fast 503 beats twenty minutes of polling.
+    const res = await submit(h);
+    assert.equal(res.statusCode, 503);
+    assert.equal(res.headers['retry-after'], '30');
+    assert.match(res.json().detail, /no pod is serving/);
   });
 
   it('re-dispatches in-flight work after a gateway restart rather than failing it', async () => {
@@ -216,7 +221,7 @@ describe('scheduling', () => {
     // Simulate the restart path: leases extended, nothing failed.
     const recovered = h.ctx.jobs.recoverOnStartup(Date.now(), 60_000);
     assert.equal(recovered, 1);
-    assert.equal(h.ctx.jobs.get(id)!.state, 'running');
+    assert.equal(h.ctx.jobs.get(id)!.state, 'in_progress');
 
     // The pod comes back and re-claims with the lease it still holds.
     const resumed = await poll({
@@ -236,7 +241,7 @@ describe('scheduling', () => {
       agent_version: null,
       model_path: 'Wan-AI/Wan2.2-I2V-A14B-Diffusers',
       lora_path: null,
-      pipelines: ['wan22-i2v'],
+      model: MODEL,
       gpu: null,
       max_in_flight: 2,
       jobs_completed: 0,

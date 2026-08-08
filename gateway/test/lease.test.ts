@@ -11,7 +11,8 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import {
   agentHeaders,
   authHeaders,
-  createJobBody,
+  submit,
+  registerPod,
   makeHarness,
   pollBody,
   type Harness,
@@ -30,12 +31,9 @@ describe('lease fencing', () => {
   });
 
   async function createAndClaim(podId = 'pod-a') {
-    const created = await h.app.inject({
-      method: 'POST',
-      url: '/v1/jobs',
-      headers: authHeaders,
-      payload: createJobBody(),
-    });
+    await registerPod(h, { pod_id: podId });
+    const created = await submit(h);
+    assert.equal(created.statusCode, 200, JSON.stringify(created.json()));
     const id = created.json().id as string;
     const poll = await h.app.inject({
       method: 'POST',
@@ -60,8 +58,8 @@ describe('lease fencing', () => {
     assert.equal(result.statusCode, 409);
     assert.equal(result.json().detail, 'stale_lease');
 
-    const job = await h.app.inject({ method: 'GET', url: `/v1/jobs/${id}`, headers: authHeaders });
-    assert.equal(job.json().state, 'running', 'the impostor must not have moved the job');
+    const job = await h.app.inject({ method: 'GET', url: `/v1/videos/${id}`, headers: authHeaders });
+    assert.equal(job.json().status, 'in_progress', 'the impostor must not have moved the job');
   });
 
   it('stops a superseded pod from clobbering a job another pod completed', async () => {
@@ -116,13 +114,13 @@ describe('lease fencing', () => {
     });
     assert.equal(zombie.statusCode, 409);
 
-    const job = await h.app.inject({ method: 'GET', url: `/v1/jobs/${id}`, headers: authHeaders });
-    assert.equal(job.json().state, 'completed');
+    const job = await h.app.inject({ method: 'GET', url: `/v1/videos/${id}`, headers: authHeaders });
+    assert.equal(job.json().status, 'completed');
     assert.equal(job.json().error, null);
 
     const media = await h.app.inject({
       method: 'GET',
-      url: `/v1/outputs/${id}/output.mp4`,
+      url: `/v1/videos/${id}/content`,
       headers: authHeaders,
     });
     assert.equal(media.rawPayload.toString(), 'the real clip');
@@ -140,10 +138,12 @@ describe('lease fencing', () => {
 
     const download = await h.app.inject({
       method: 'GET',
-      url: `/v1/outputs/${id}/output.mp4`,
+      url: `/v1/videos/${id}/content`,
       headers: authHeaders,
     });
-    assert.equal(download.statusCode, 404);
+    // Still in flight and no artifact recorded: the rejected bytes never became
+    // downloadable content.
+    assert.equal(download.statusCode, 409);
   });
 
   it('refuses to hand the input image to a pod that no longer owns the job', async () => {
@@ -200,8 +200,8 @@ describe('lease fencing', () => {
     );
     assert.equal(swept.failed, 1);
 
-    const job = await h.app.inject({ method: 'GET', url: `/v1/jobs/${id}`, headers: authHeaders });
-    assert.equal(job.json().state, 'failed');
-    assert.match(job.json().error, /pod lost during generation/);
+    const job = await h.app.inject({ method: 'GET', url: `/v1/videos/${id}`, headers: authHeaders });
+    assert.equal(job.json().status, 'failed');
+    assert.match(job.json().error.message, /pod lost during generation/);
   });
 });

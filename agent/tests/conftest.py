@@ -224,7 +224,7 @@ def assignment(job_id: str = "j_1", lease_id: str = "lease-1", **fields) -> dict
     return {
         "job_id": job_id,
         "lease_id": lease_id,
-        "pipeline": "wan22-i2v",
+        "model": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
         "deadline_at": 0,
         "input": {"url": f"/agent/v1/jobs/{job_id}/input", "sha256": None, "bytes": None},
         "sglang": {

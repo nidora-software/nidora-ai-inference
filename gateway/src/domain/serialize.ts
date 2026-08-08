@@ -1,41 +1,49 @@
 /**
- * Job row → client JSON.
+ * Job row → client JSON, in SGLang's (and therefore OpenAI's) video shape.
  *
- * CONTRACT (docs/api.md): a job carries a non-empty string `id` and a `state`
- * from the five documented values. `artifacts[0].url` is a path relative to this
- * gateway — clients resolve it against their configured host and fetch it with
- * credentials, refusing redirects, so it must never become absolute or point
- * outside `/v1/outputs/<job id>/`. Timestamps are ISO-8601 `...Z`.
+ * CONTRACT (docs/api.md): a video carries a non-empty string `id`, `object`
+ * `"video"`, and a `status` from the five documented values. Timestamps are
+ * unix **seconds**, not milliseconds and not ISO strings, because that is what
+ * an OpenAI-shaped client parses. `progress` is an integer percentage for the
+ * same reason, though it is stored internally as a 0-1 fraction.
+ *
+ * The rendered media is not linked from here: it is at
+ * `GET /v1/videos/{id}/content`, by convention rather than by URL, exactly as
+ * SGLang does it. That removes the whole class of bugs where a gateway-built
+ * URL escapes its own prefix.
  */
-import type { Job, JobResponse } from './types.js';
+import type { Job, VideoResponse } from './types.js';
 
-function iso(ms: number | null): string | null {
-  return ms === null ? null : new Date(ms).toISOString();
+function seconds(ms: number | null): number | null {
+  return ms === null ? null : Math.floor(ms / 1000);
 }
 
-export function toJobResponse(job: Job, queuePosition: number | null): JobResponse {
+export function toVideoResponse(
+  job: Job,
+  queuePosition: number | null,
+  artifactTtlMs: number,
+): VideoResponse {
+  // Only a completed video has media on disk, so only a completed video has a
+  // download window that can expire.
+  const expiresAt =
+    job.state === 'completed' && job.finished_at !== null
+      ? seconds(job.finished_at + artifactTtlMs)
+      : null;
+
   return {
     id: job.id,
-    pipeline: job.pipeline,
-    state: job.state,
-    progress: job.progress,
-    error: job.error,
-    params: job.params,
-    artifacts: job.artifacts,
-    created_at: iso(job.created_at)!,
-    started_at: iso(job.started_at),
-    finished_at: iso(job.finished_at),
+    object: 'video',
+    model: job.model,
+    status: job.state,
+    progress: Math.round(job.progress * 100),
+    created_at: seconds(job.created_at)!,
+    completed_at: seconds(job.finished_at),
+    expires_at: expiresAt,
+    size: job.params.size,
+    seconds: job.params.seconds,
+    error: job.error ? { code: 'generation_failed', message: job.error } : null,
     pod_id: job.pod_id,
     attempts: job.attempts,
     queue_position: queuePosition,
   };
-}
-
-/**
- * Callers validate both segments with `isSafeFilename` first; encoding here is
- * the second layer, so that a future caller which forgets to validate produces
- * an escaped (harmless) URL rather than a traversal the consumer would follow.
- */
-export function artifactUrl(jobId: string, filename: string): string {
-  return `/v1/outputs/${encodeURIComponent(jobId)}/${encodeURIComponent(filename)}`;
 }

@@ -23,7 +23,7 @@ log = logging.getLogger("nidora_agent.runner")
 class Assignment:
     job_id: str
     lease_id: str
-    pipeline: str
+    model: str
     endpoint: str
     fields: dict[str, object]
     input_url: str
@@ -36,7 +36,7 @@ class Assignment:
         return cls(
             job_id=str(payload["job_id"]),
             lease_id=str(payload["lease_id"]),
-            pipeline=str(payload.get("pipeline", "")),
+            model=str(payload.get("model", "")),
             endpoint=str(sglang.get("endpoint", "/v1/videos")),
             fields=dict(sglang.get("fields") or {}),
             input_url=str(source.get("url", "")),

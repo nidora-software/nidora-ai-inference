@@ -1,12 +1,17 @@
 # Client API reference
 
-The API served at `https://<your-hostname>`. Submit a job, poll it, download
-the result. The gateway assigns the work to a warm pod or queues it until one is
-free.
+The API served at `https://<your-hostname>`. Create a video, poll it, download
+the content.
 
-> This is the **gateway** API. The SGLang Diffusion API it wraps is an internal
-> detail of a pod, bound to `127.0.0.1` and never reachable from outside —
-> see [SGLang underneath](#sglang-underneath).
+**It is deliberately the same API SGLang Diffusion serves — which is OpenAI's.**
+A client that can talk to a single SGLang server can talk to a whole fleet of
+pods by changing the base URL and nothing else. The gateway adds a queue,
+leases, retries and admission control behind that surface; it does not invent a
+vocabulary of its own.
+
+> The SGLang server this fronts is an internal detail of a pod, bound to
+> `127.0.0.1` and never reachable from outside — see
+> [SGLang underneath](#sglang-underneath).
 
 ## Authentication
 
@@ -25,102 +30,120 @@ by the gateway. `Authorization: Bearer <key>` is accepted in place of
 A missing Access token gives a redirect to a login page, not a 401 — if you see
 HTML where JSON should be, that is why.
 
-`GET /health` is the one unauthenticated route, so probes and the tunnel work.
+`GET /health` and `GET /metrics` are the unauthenticated routes at the gateway,
+so probes work. Access still covers them unless you add a bypass policy for the
+path — see [deploy/README.md](../deploy/README.md).
 
-## Submit a job
+## Create a video
+
+`multipart/form-data`, with the reference image as a file part. This is how
+SGLang takes it, and it avoids inflating every image by a third the way a
+base64 JSON body does.
 
 ```bash
-curl -sX POST https://<your-hostname>/v1/jobs \
+curl -sX POST https://<your-hostname>/v1/videos \
   -H "X-Api-Key: $KEY" \
   -H "CF-Access-Client-Id: $CF_ACCESS_ID" \
   -H "CF-Access-Client-Secret: $CF_ACCESS_SECRET" \
-  -H 'content-type: application/json' \
-  -d '{
-    "pipeline": "wan22-i2v",
-    "params": {
-      "image": "data:image/jpeg;base64,/9j/4AAQ...",
-      "prompt": "the woman smiles and waves at the camera",
-      "negative_prompt": "",
-      "resolution": "480p"
-    }
-  }'
+  -F "model=Wan-AI/Wan2.2-I2V-A14B-Diffusers" \
+  -F "prompt=the woman smiles and waves at the camera" \
+  -F "input_reference=@frame.jpg;type=image/jpeg"
 ```
 
 ```json
-{ "id": "j_ab12cd34ef56", "state": "queued", "progress": 0, "error": null,
-  "artifacts": [], "queue_position": 0,
-  "params": { "size": "464x832", "seconds": 5, "num_inference_steps": 4, ... },
-  "created_at": "2026-08-08T09:41:24.837Z" }
+{
+  "id": "video_ab12cd34ef56",
+  "object": "video",
+  "model": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+  "status": "queued",
+  "progress": 0,
+  "created_at": 1786553284,
+  "completed_at": null,
+  "expires_at": null,
+  "size": "464x832",
+  "seconds": 5,
+  "error": null,
+  "pod_id": null,
+  "attempts": 0,
+  "queue_position": 0
+}
 ```
 
-Returns `202`. It never blocks on a pod — a submission completes in
-milliseconds whether or not any capacity exists.
+Returns `200`. It does not block on a pod: creation completes in milliseconds
+and the video queues.
 
-### Parameters
+### Fields
 
 | Field | Required | Notes |
 |---|---|---|
-| `pipeline` | yes | Must be one of `GET /v1/pipelines`. Unknown values give 404. |
-| `params.image` | yes | Image **bytes** as a base64 data URI (or bare base64). JPEG, PNG or WebP, sniffed from the content — the declared mime type is ignored. URLs are refused. |
-| `params.prompt` | yes | Up to 2000 characters. |
-| `params.negative_prompt` | no | Defaults to the pipeline's tuned negative prompt. |
-| `params.resolution` | no | `480p` (default) or `720p`. |
-| `params.seconds` | no | Clamped to the pipeline's limit. |
-| `params.num_inference_steps` | no | Clamped. The Lightning distill LoRA is a 4-step distill; more steps make output worse, not better. |
-| `params.seed` | no | Integer, for reproducibility. |
+| `model` | yes | Must be one of `GET /v1/models`. Unknown values give 404 with the list. |
+| `input_reference` | yes | The image, as a **file part**. JPEG, PNG or WebP, sniffed from the content — the declared type is ignored. |
+| `prompt` | yes | Up to 2000 characters. |
+| `negative_prompt` | no | Defaults to the model's tuned negative prompt. |
+| `size` | no | `WxH`, or a resolution label (`480p`/`720p`). Omit and the gateway derives one from the image. |
+| `seconds` | no | Clamped to the model's limit. |
+| `num_inference_steps` | no | Clamped. The Lightning distill LoRA is a 4-step distill; more steps make output worse, not better. |
+| `seed` | no | Integer, for reproducibility. |
 
-`size` is **not** a parameter. The gateway reads the input image's header and
+Omitting `size` is the recommended path: the gateway reads the image header and
 computes an aspect-preserving, 16-pixel-aligned frame that fits the resolution's
 pixel budget (480×832, or 720×1280 at 720p), bounded so a pathological aspect
-ratio cannot request a frame the model can't render. `params.size` in the
-response tells you what it chose.
+ratio cannot request a frame the model can't render. Supplying `size` is
+supported for parity with SGLang, and is validated against the same bounds — a
+frame outside them is a 400, not a job that fails twenty minutes later.
 
-Guidance scale and other engine knobs are owned by the gateway and not client-settable.
+Guidance scale and the remaining engine knobs are owned by the gateway and not
+client-settable.
 
 ## Poll
 
 ```bash
-curl -s https://<your-hostname>/v1/jobs/j_ab12cd34ef56 -H "X-Api-Key: $KEY" ...
+curl -s https://<your-hostname>/v1/videos/video_ab12cd34ef56 -H "X-Api-Key: $KEY" ...
 ```
 
-Poll every few seconds. `state` is one of:
+Poll every few seconds. `status` is one of:
 
-| State | Meaning |
+| Status | Meaning |
 |---|---|
-| `queued` | Waiting for a pod. `queue_position` shows how many jobs are ahead. |
-| `running` | A pod is generating it. |
-| `completed` | Done; `artifacts[0].url` is ready to download. |
-| `failed` | `error` explains why. |
+| `queued` | Waiting for a pod. `queue_position` shows how many are ahead. |
+| `in_progress` | A pod is generating it. `progress` climbs 0 → 100. |
+| `completed` | Done; the content is ready to download until `expires_at`. |
+| `failed` | `error.message` explains why. |
 | `cancelled` | Cancelled by a client, or by the gateway after a cancel request. |
 
 These five are the complete set and will not grow without a coordinated client
 change — see [gateway.md](gateway.md#the-client-contract).
 
+`created_at`, `completed_at` and `expires_at` are **unix seconds**. `progress`
+is an integer percentage.
+
 ## Download
 
 ```bash
-curl -s "https://<your-hostname>$(…artifacts[0].url)" \
+curl -s https://<your-hostname>/v1/videos/video_ab12cd34ef56/content \
   -H "X-Api-Key: $KEY" ... -o out.mp4
 ```
 
-`artifacts[0].url` is **relative** (`/v1/outputs/<job_id>/output.mp4`) and served
-by the gateway with a `200` and a body — never a redirect to object storage.
-Send the same API key.
+The path is derived from the id — the API never hands you a URL to follow, so
+there is nothing for a credential-sending client to have to validate. Served
+with a `200` and a body, never a redirect to object storage.
 
-`410 Gone` means the artifact was swept by the retention TTL (24 h by default);
-`404` means it never existed. Download promptly and store the clip yourself.
+`410 Gone` means the content was swept by the retention TTL (24 h by default);
+`404` means no such video; `409` means it has not finished yet. Download
+promptly and store the clip yourself.
 
 ## Cancel
 
 ```bash
-curl -sX DELETE https://<your-hostname>/v1/jobs/j_ab12cd34ef56 -H "X-Api-Key: $KEY" ...
+curl -sX DELETE https://<your-hostname>/v1/videos/video_ab12cd34ef56 -H "X-Api-Key: $KEY" ...
 ```
 
-A queued job becomes `cancelled` immediately. A running one returns
-`{"id": "...", "state": "cancelling"}` and the pod stops on its next poll.
+A queued video becomes `cancelled` immediately and returns `200`. One already
+running returns `202` with `status` still `in_progress`; the pod stops on its
+next poll and the status becomes `cancelled` then.
 
-Note that `cancelling` appears **only in this response body**. The job's own
-`state` stays `running` until the cancellation lands, then becomes `cancelled`.
+There is deliberately no `cancelling` status — a client is entitled to map
+exactly the five above.
 
 Whether the GPU actually stops depends on SGLang supporting cancellation of an
 in-flight video job; if it does not, the pod abandons the result and the
@@ -130,13 +153,18 @@ capacity frees up when generation finishes on its own.
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /v1/jobs?state=&limit=` | List jobs, newest first |
-| `GET /v1/jobs/:id/events` | Lifecycle trail — why a job took as long as it did |
-| `GET /v1/pipelines` | What this deployment can run, with defaults |
-| `GET /health` | Queue depth and fleet capacity (no auth) |
+| `GET /v1/models` | Models the fleet is serving **right now**, with defaults and limits |
+| `GET /v1/videos?status=&limit=` | List, newest first, in an `{"object":"list","data":[…]}` envelope |
+| `GET /v1/videos/:id/events` | Lifecycle trail — why a video took as long as it did |
+| `GET /health` | Queue depth and fleet capacity (no gateway auth) |
 | `GET /metrics` | Prometheus exposition |
 | `GET /v1/pods` | Per-pod state (admin key) |
 | `POST /v1/pods/:id/drain` | Stop assigning new work to a pod (admin key) |
+
+`GET /v1/models` answers what the fleet can run at this moment, exactly as
+SGLang's `/models` answers it for one server: a model appears only while a pod
+serving it is connected. An empty fleet returns an empty list rather than
+advertising an indefinite queue.
 
 ## Errors
 
@@ -144,15 +172,22 @@ capacity frees up when generation finishes on its own.
 |---|---|
 | 400 | Bad parameters — `detail` says which |
 | 401 | Missing or wrong API key |
-| 404 | Unknown job, or unknown `pipeline` (with `available`) |
-| 409 | Cancelling a job that already finished |
-| 410 | The artifact expired |
-| 413 | Payload past the configured limit |
-| 503 | Queue is full — honour `Retry-After` and consider another provider |
+| 404 | Unknown video, or unknown `model` (with `available`) |
+| 409 | Cancelling a video that already finished, or downloading one that has not |
+| 410 | The content expired |
+| 413 | `input_reference` past the configured limit |
+| 415 | Not `multipart/form-data` |
+| 503 | No pod is serving that model, or the queue is full — honour `Retry-After` |
 
-A 503 is deliberate backpressure: past a certain depth the queue cannot clear
-inside a caller's timeout, so a fast refusal beats twenty minutes of polling
-followed by a failure. See [gateway.md](gateway.md#backpressure-not-false-hope).
+Both 503s are deliberate backpressure. Nothing in the fleet serving your model
+means the video could only sit in the queue until its deadline, and past a
+certain depth the queue cannot clear inside a caller's timeout — a fast refusal
+beats twenty minutes of polling followed by a failure. See
+[gateway.md](gateway.md#backpressure-not-false-hope).
+
+A pod that is connected but still loading its model **does** count as capacity:
+warmup takes ~10 minutes, and rejecting for that window would be worse than
+queueing through it.
 
 ## Recommended defaults (Wan 2.2 A14B + Lightning distill LoRA)
 
@@ -164,9 +199,10 @@ followed by a failure. See [gateway.md](gateway.md#backpressure-not-false-hope).
 
 Each pod runs SGLang Diffusion's OpenAI-compatible API
 ([upstream docs](https://docs.sglang.io/diffusion/api/openai_api.html)) on
-`127.0.0.1:8000`. The gateway's agent translates a job into a
+`127.0.0.1:8000`. The gateway's agent translates an assignment into a
 `POST /v1/videos` multipart request, polls `GET /v1/videos/{id}`, and fetches
-`GET /v1/videos/{id}/content`.
+`GET /v1/videos/{id}/content` — the same three calls this API exposes, which is
+why the two surfaces match.
 
 That server has **no authentication of its own**, which is exactly why it is
 bound to localhost in gateway mode. Clients never speak to it.
@@ -174,9 +210,21 @@ bound to localhost in gateway mode. Clients never speak to it.
 The exact field names SGLang accepts (`negative_prompt`, `num_inference_steps`,
 `guidance_scale`, `seed`) should be confirmed against a pod's `/openapi.json`
 for the pinned version. They live in
-[`gateway/src/domain/pipelines.ts`](../gateway/src/domain/pipelines.ts) and
+[`gateway/src/domain/models.ts`](../gateway/src/domain/models.ts) and
 [`scheduler/claim.ts`](../gateway/src/scheduler/claim.ts), so correcting them is
 a gateway redeploy rather than a pod image rebuild.
+
+### Where the two surfaces differ
+
+The gateway is a fleet, so a few things exist here that cannot exist on a single
+server, and one field is typed more strictly:
+
+- `queue_position`, `pod_id` and `attempts` are gateway extras on the video
+  object. An OpenAI-shaped client ignores unknown fields.
+- `503` with `Retry-After` — a single server has no queue to be full.
+- `seconds` is returned as a **number**, where OpenAI returns a string.
+- `GET /v1/models` carries `resolutions`, `defaults`, `limits` and `pods_ready`
+  alongside the standard `id`/`object`.
 
 A pod can still be run standalone as its own endpoint, speaking the raw SGLang
 API — see [deploy-pods.md](deploy-pods.md#standalone-mode).

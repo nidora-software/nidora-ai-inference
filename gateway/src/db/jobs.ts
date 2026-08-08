@@ -14,17 +14,17 @@
  */
 import type { Db } from './sqlite.js';
 import {
-  isJobState,
+  isVideoStatus,
   type Artifact,
   type Job,
   type JobEventKind,
   type JobParams,
-  type JobState,
+  type VideoStatus,
 } from '../domain/types.js';
 
 interface JobRow {
   id: string;
-  pipeline: string;
+  model: string;
   params: string;
   input_path: string | null;
   input_sha256: string | null;
@@ -48,7 +48,7 @@ interface JobRow {
 
 function hydrate(row: JobRow): Job {
   const state = row.state;
-  if (!isJobState(state)) {
+  if (!isVideoStatus(state)) {
     // Only reachable via hand-editing the database; fail loudly rather than
     // shipping an unmappable state to the client (which would make the
     // consumer's toJob() throw).
@@ -56,7 +56,7 @@ function hydrate(row: JobRow): Job {
   }
   return {
     id: row.id,
-    pipeline: row.pipeline,
+    model: row.model,
     params: JSON.parse(row.params) as JobParams,
     input_path: row.input_path,
     input_sha256: row.input_sha256,
@@ -81,7 +81,7 @@ function hydrate(row: JobRow): Job {
 
 export interface NewJob {
   id: string;
-  pipeline: string;
+  model: string;
   params: JobParams;
   input_path: string;
   input_sha256: string;
@@ -104,13 +104,13 @@ export class JobStore {
   create(job: NewJob): Job {
     this.db
       .prepare(
-        `INSERT INTO jobs (id, pipeline, params, input_path, input_sha256, input_bytes,
+        `INSERT INTO jobs (id, model, params, input_path, input_sha256, input_bytes,
                            state, created_at, deadline_at)
-         VALUES (@id, @pipeline, @params, @input_path, @input_sha256, @input_bytes,
+         VALUES (@id, @model, @params, @input_path, @input_sha256, @input_bytes,
                  'queued', @created_at, @deadline_at)`,
       )
       .run({ ...job, params: JSON.stringify(job.params) });
-    this.addEvent(job.id, 'created', null, job.pipeline);
+    this.addEvent(job.id, 'created', null, job.model);
     return this.get(job.id)!;
   }
 
@@ -121,7 +121,7 @@ export class JobStore {
     return row ? hydrate(row) : null;
   }
 
-  list(opts: { state?: JobState; limit?: number } = {}): Job[] {
+  list(opts: { state?: VideoStatus; limit?: number } = {}): Job[] {
     const limit = Math.min(Math.max(opts.limit ?? 50, 1), 500);
     const rows = opts.state
       ? (this.db
@@ -155,9 +155,9 @@ export class JobStore {
       .prepare(
         `SELECT
            SUM(state = 'queued')  AS queued,
-           SUM(state = 'running') AS running,
+           SUM(state = 'in_progress') AS running,
            MIN(CASE WHEN state = 'queued' THEN created_at END) AS oldest_queued_at
-         FROM jobs WHERE state IN ('queued', 'running')`,
+         FROM jobs WHERE state IN ('queued', 'in_progress')`,
       )
       .get() as { queued: number | null; running: number | null; oldest_queued_at: number | null };
     return {
@@ -168,7 +168,7 @@ export class JobStore {
   }
 
   /** In-flight jobs a pod believes it owns, used to reconcile a reconnecting agent. */
-  listByPod(podId: string, state: JobState = 'running'): Job[] {
+  listByPod(podId: string, state: VideoStatus = 'in_progress'): Job[] {
     const rows = this.db
       .prepare('SELECT * FROM jobs WHERE pod_id = ? AND state = ? ORDER BY created_at ASC')
       .all(podId, state) as JobRow[];
@@ -178,14 +178,14 @@ export class JobStore {
   // ------------------------------------------------------------- transitions
 
   /**
-   * Dispatch: CAS `queued` -> `running`, taking ownership with a fresh lease.
+   * Dispatch: CAS `queued` -> `in_progress`, taking ownership with a fresh lease.
    * Returns false when another poller claimed the job first.
    */
   claim(id: string, podId: string, leaseId: string, expiresAt: number, now: number): boolean {
     const result = this.db
       .prepare(
         `UPDATE jobs
-            SET state = 'running', pod_id = ?, lease_id = ?, lease_expires_at = ?,
+            SET state = 'in_progress', pod_id = ?, lease_id = ?, lease_expires_at = ?,
                 started_at = COALESCE(started_at, ?), attempts = attempts + 1
           WHERE id = ? AND state = 'queued'`,
       )
@@ -208,7 +208,7 @@ export class JobStore {
             SET lease_expires_at = ?,
                 progress = COALESCE(?, progress),
                 upstream_id = COALESCE(?, upstream_id)
-          WHERE id = ? AND state = 'running' AND lease_id = ?`,
+          WHERE id = ? AND state = 'in_progress' AND lease_id = ?`,
       )
       .run(expiresAt, progress ?? null, upstreamId ?? null, id, leaseId);
     return result.changes === 1;
@@ -220,7 +220,7 @@ export class JobStore {
         `UPDATE jobs
             SET state = 'completed', progress = 1, error = NULL,
                 artifacts = ?, finished_at = ?, lease_id = NULL, lease_expires_at = NULL
-          WHERE id = ? AND state = 'running' AND lease_id = ?`,
+          WHERE id = ? AND state = 'in_progress' AND lease_id = ?`,
       )
       .run(JSON.stringify(artifacts), now, id, leaseId);
     if (result.changes === 1) this.addEvent(id, 'completed', null, null);
@@ -232,9 +232,9 @@ export class JobStore {
     // sweep) rather than a pod, so ownership isn't checked.
     const sql = leaseId
       ? `UPDATE jobs SET state='failed', error=?, finished_at=?, lease_id=NULL, lease_expires_at=NULL
-           WHERE id=? AND state='running' AND lease_id=?`
+           WHERE id=? AND state='in_progress' AND lease_id=?`
       : `UPDATE jobs SET state='failed', error=?, finished_at=?, lease_id=NULL, lease_expires_at=NULL
-           WHERE id=? AND state IN ('queued','running')`;
+           WHERE id=? AND state IN ('queued','in_progress')`;
     const args = leaseId ? [error, now, id, leaseId] : [error, now, id];
     const result = this.db.prepare(sql).run(...args);
     if (result.changes === 1) this.addEvent(id, 'failed', null, error.slice(0, 500));
@@ -242,17 +242,17 @@ export class JobStore {
   }
 
   /**
-   * Return a running job to the queue after its pod stopped renewing, or after
+   * Return an in-flight job to the queue after its pod stopped renewing, or after
    * a retryable pod-side failure. Clears ownership so the next poller can claim it.
    */
   requeue(id: string, leaseId: string | null, reason: string): boolean {
     const sql = leaseId
       ? `UPDATE jobs SET state='queued', pod_id=NULL, lease_id=NULL, lease_expires_at=NULL,
                         progress=0, upstream_id=NULL
-           WHERE id=? AND state='running' AND lease_id=?`
+           WHERE id=? AND state='in_progress' AND lease_id=?`
       : `UPDATE jobs SET state='queued', pod_id=NULL, lease_id=NULL, lease_expires_at=NULL,
                         progress=0, upstream_id=NULL
-           WHERE id=? AND state='running'`;
+           WHERE id=? AND state='in_progress'`;
     const args = leaseId ? [id, leaseId] : [id];
     const result = this.db.prepare(sql).run(...args);
     if (result.changes === 1) this.addEvent(id, 'requeued', null, reason);
@@ -272,7 +272,7 @@ export class JobStore {
   }
 
   /**
-   * Flag a running job for cancellation. The pod picks the flag up on its next
+   * Flag an in-flight job for cancellation. The pod picks the flag up on its next
    * poll; the reaper forces the transition if it never acknowledges.
    *
    * Note there is deliberately no `cancelling` job state — see domain/types.ts.
@@ -281,7 +281,7 @@ export class JobStore {
     const result = this.db
       .prepare(
         `UPDATE jobs SET cancel_requested=1, cancel_requested_at=COALESCE(cancel_requested_at, ?)
-           WHERE id=? AND state='running'`,
+           WHERE id=? AND state='in_progress'`,
       )
       .run(now, id);
     if (result.changes === 1) this.addEvent(id, 'cancel_requested', null, null);
@@ -291,9 +291,9 @@ export class JobStore {
   markCancelled(id: string, leaseId: string | null, now: number, detail: string): boolean {
     const sql = leaseId
       ? `UPDATE jobs SET state='cancelled', finished_at=?, lease_id=NULL, lease_expires_at=NULL
-           WHERE id=? AND state='running' AND lease_id=?`
+           WHERE id=? AND state='in_progress' AND lease_id=?`
       : `UPDATE jobs SET state='cancelled', finished_at=?, lease_id=NULL, lease_expires_at=NULL
-           WHERE id=? AND state='running'`;
+           WHERE id=? AND state='in_progress'`;
     const args = leaseId ? [now, id, leaseId] : [now, id];
     const result = this.db.prepare(sql).run(...args);
     if (result.changes === 1) this.addEvent(id, 'cancelled', null, detail);
@@ -312,11 +312,11 @@ export class JobStore {
 
   // ---------------------------------------------------------------- sweeping
 
-  /** Running jobs whose pod stopped renewing the lease. */
+  /** In-flight jobs whose pod stopped renewing the lease. */
   expiredLeases(now: number): Job[] {
     const rows = this.db
       .prepare(
-        "SELECT * FROM jobs WHERE state='running' AND lease_expires_at IS NOT NULL AND lease_expires_at < ?",
+        "SELECT * FROM jobs WHERE state='in_progress' AND lease_expires_at IS NOT NULL AND lease_expires_at < ?",
       )
       .all(now) as JobRow[];
     return rows.map(hydrate);
@@ -325,16 +325,16 @@ export class JobStore {
   /** Jobs that blew their wall-clock budget, whether or not a pod ever took them. */
   overdue(now: number): Job[] {
     const rows = this.db
-      .prepare("SELECT * FROM jobs WHERE state IN ('queued','running') AND deadline_at < ?")
+      .prepare("SELECT * FROM jobs WHERE state IN ('queued','in_progress') AND deadline_at < ?")
       .all(now) as JobRow[];
     return rows.map(hydrate);
   }
 
-  /** Running jobs whose cancellation was never acknowledged by the pod. */
+  /** In-flight jobs whose cancellation was never acknowledged by the pod. */
   staleCancels(before: number): Job[] {
     const rows = this.db
       .prepare(
-        "SELECT * FROM jobs WHERE state='running' AND cancel_requested=1 AND cancel_requested_at < ?",
+        "SELECT * FROM jobs WHERE state='in_progress' AND cancel_requested=1 AND cancel_requested_at < ?",
       )
       .all(before) as JobRow[];
     return rows.map(hydrate);
@@ -342,20 +342,20 @@ export class JobStore {
 
   /**
    * Gateway restart. Unlike the legacy in-process worker, the work survives on
-   * the pods — so running jobs are NOT failed. Their leases are pushed out by
+   * the pods — so in-flight jobs are NOT failed. Their leases are pushed out by
    * one grace window; agents re-claim them on their next poll (<= 25s), and the
    * reaper requeues whatever nobody claims.
    */
   recoverOnStartup(now: number, graceMs: number): number {
     const result = this.db
-      .prepare("UPDATE jobs SET lease_expires_at = ? WHERE state = 'running'")
+      .prepare("UPDATE jobs SET lease_expires_at = ? WHERE state = 'in_progress'")
       .run(now + graceMs);
     if (result.changes > 0) {
       this.db
         .prepare(
           `INSERT INTO job_events (job_id, ts, kind, pod_id, detail)
              SELECT id, ?, 'recovered', pod_id, 'lease extended after gateway restart'
-               FROM jobs WHERE state = 'running'`,
+               FROM jobs WHERE state = 'in_progress'`,
         )
         .run(now);
     }

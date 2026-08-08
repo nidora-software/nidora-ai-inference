@@ -1,22 +1,28 @@
 /**
  * Wire and storage types.
  *
- * CONTRACT WARNING: `JobState` is part of the public API (docs/api.md). Clients
- * are entitled to map exactly these five strings and treat anything else as an
- * error, so adding a state is a breaking change and needs a coordinated client
- * rollout. In particular there is no `cancelling` state: a cancel in flight is
- * a running job with `cancel_requested` set.
+ * CONTRACT WARNING: `VideoStatus` is part of the public API (docs/api.md) and
+ * mirrors SGLang's — which mirrors OpenAI's. Clients are entitled to map
+ * exactly these five strings and treat anything else as an error, so adding one
+ * is a breaking change. In particular there is no `cancelling` status: a cancel
+ * in flight is an `in_progress` video with `cancel_requested` set.
  */
-export const JOB_STATES = ['queued', 'running', 'completed', 'failed', 'cancelled'] as const;
-export type JobState = (typeof JOB_STATES)[number];
+export const VIDEO_STATUSES = [
+  'queued',
+  'in_progress',
+  'completed',
+  'failed',
+  'cancelled',
+] as const;
+export type VideoStatus = (typeof VIDEO_STATUSES)[number];
 
-export const TERMINAL_STATES: readonly JobState[] = ['completed', 'failed', 'cancelled'];
+export const TERMINAL_STATES: readonly VideoStatus[] = ['completed', 'failed', 'cancelled'];
 
-export function isJobState(value: unknown): value is JobState {
-  return typeof value === 'string' && (JOB_STATES as readonly string[]).includes(value);
+export function isVideoStatus(value: unknown): value is VideoStatus {
+  return typeof value === 'string' && (VIDEO_STATUSES as readonly string[]).includes(value);
 }
 
-export function isTerminal(state: JobState): boolean {
+export function isTerminal(state: VideoStatus): boolean {
   return TERMINAL_STATES.includes(state);
 }
 
@@ -34,7 +40,6 @@ export interface JobParams {
 }
 
 export interface Artifact {
-  url: string;
   media_type: string;
   filename: string;
   bytes?: number;
@@ -44,12 +49,13 @@ export interface Artifact {
 /** A row of the `jobs` table, with JSON columns already decoded. */
 export interface Job {
   id: string;
-  pipeline: string;
+  /** Canonical registry id, resolved from the client's `model` on create. */
+  model: string;
   params: JobParams;
   input_path: string | null;
   input_sha256: string | null;
   input_bytes: number | null;
-  state: JobState;
+  state: VideoStatus;
   progress: number;
   error: string | null;
   artifacts: Artifact[];
@@ -72,10 +78,11 @@ export interface Pod {
   first_seen_at: number;
   last_seen_at: number;
   agent_version: string | null;
+  /** Raw value the agent reported, whatever SGLang was pointed at. */
   model_path: string | null;
   lora_path: string | null;
-  /** Derived from `model_path` via the pipeline registry; never self-reported. */
-  pipelines: string[];
+  /** Canonical registry id for `model_path`, or null if unrecognised. */
+  model: string | null;
   gpu: string | null;
   max_in_flight: number;
   sglang_ready: boolean;
@@ -99,21 +106,25 @@ export type JobEventKind =
   | 'recovered';
 
 /**
- * The JSON body handed back to clients. Field names and the ISO-8601 timestamp
- * format are the documented wire shape — see docs/api.md.
+ * The video object handed back to clients — the shape SGLang and OpenAI use.
+ * `created_at` and `completed_at` are unix seconds, `progress` is an integer
+ * percentage. See docs/api.md; pinned by test/contract.test.ts.
  */
-export interface JobResponse {
+export interface VideoResponse {
   id: string;
-  pipeline: string;
-  state: JobState;
+  object: 'video';
+  model: string;
+  status: VideoStatus;
+  /** 0-100, integer. Stored internally as a 0-1 fraction. */
   progress: number;
-  error: string | null;
-  params: JobParams;
-  artifacts: Artifact[];
-  created_at: string;
-  started_at: string | null;
-  finished_at: string | null;
-  /* Gateway extras — ignored by the consumer, useful to operators. */
+  created_at: number;
+  completed_at: number | null;
+  /** When the rendered media is swept, so a client knows its download window. */
+  expires_at: number | null;
+  size: string;
+  seconds: number;
+  error: { code: string; message: string } | null;
+  /* Gateway extras — unknown to an OpenAI client, useful to operators. */
   pod_id: string | null;
   attempts: number;
   queue_position: number | null;

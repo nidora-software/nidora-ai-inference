@@ -138,7 +138,7 @@ class Agent:
             return  # duplicate delivery; the lease makes this harmless
         state = JobState(assignment=assignment)
         self.jobs[assignment.job_id] = state
-        log.info("starting job %s (%s)", assignment.job_id, assignment.pipeline)
+        log.info("starting job %s (%s)", assignment.job_id, assignment.model)
         task = asyncio.create_task(self._execute(client, state), name=f"job-{assignment.job_id}")
         self.tasks[assignment.job_id] = task
 

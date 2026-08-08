@@ -1,8 +1,8 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 
-/** `j_<12 hex>` — the id format the legacy stack used and clients already log. */
-export function newJobId(): string {
-  return `j_${randomBytes(6).toString('hex')}`;
+/** `video_<12 hex>` — the id shape SGLang and OpenAI hand back for a video. */
+export function newVideoId(): string {
+  return `video_${randomBytes(6).toString('hex')}`;
 }
 
 export function newLeaseId(): string {

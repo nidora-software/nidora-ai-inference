@@ -129,7 +129,7 @@ agent from the GPU image.
 | Per-pod detail | `curl -s $GW/v1/pods -H "X-Api-Key: $KEY" \| jq` |
 | Metrics (Prometheus) | `curl -s $GW/metrics` |
 | Retire a pod politely | `curl -X POST $GW/v1/pods/<id>/drain -H "X-Api-Key: $KEY"` |
-| Why was a job slow | `curl -s $GW/v1/jobs/<id>/events -H "X-Api-Key: $KEY" \| jq` |
+| Why was a video slow | `curl -s $GW/v1/videos/<id>/events -H "X-Api-Key: $KEY" \| jq` |
 
 Draining stops new dispatch but leaves in-flight work alone — wait for
 `in_flight: 0` before destroying the pod.

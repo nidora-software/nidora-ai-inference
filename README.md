@@ -49,16 +49,15 @@ Submit, poll, download — the gateway assigns the job to a warm pod, or queues
 it until one is free.
 
 ```bash
-curl -X POST https://<your-hostname>/v1/jobs \
+curl -X POST https://<your-hostname>/v1/videos \
   -H "X-Api-Key: $KEY" \
   -H "CF-Access-Client-Id: $CF_ACCESS_ID" \
   -H "CF-Access-Client-Secret: $CF_ACCESS_SECRET" \
-  -H 'content-type: application/json' \
-  -d '{"pipeline":"wan22-i2v","params":{
-        "image":"data:image/jpeg;base64,...",
-        "prompt":"the woman smiles and waves at the camera",
-        "resolution":"480p"}}'
-# -> {"id":"j_ab12cd34ef56","state":"queued", ...}
+  -F "model=Wan-AI/Wan2.2-I2V-A14B-Diffusers" \
+  -F "prompt=the woman smiles and waves at the camera" \
+  -F "input_reference=@frame.jpg;type=image/jpeg"
+
+# -> {"id":"video_ab12cd34ef56","object":"video","status":"queued", ...}
 ```
 
 Full reference, including the artifact download and what each state means, in

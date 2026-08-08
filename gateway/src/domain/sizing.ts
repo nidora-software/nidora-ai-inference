@@ -38,6 +38,41 @@ function align16(value: number): number {
   return Math.max(16, Math.floor(Math.round(value) / 16) * 16);
 }
 
+/**
+ * Validate a client-supplied `size`, as SGLang and OpenAI accept one.
+ *
+ * The gateway derives a size from the input image when the client omits it;
+ * this is the path for a client that wants to choose. It is not a free
+ * parameter: the frame must be 16-aligned and fit inside one of the model's
+ * allowed resolution budgets, both in area and in longest side. Otherwise a
+ * client could request a frame the model cannot render — or a 4K one that
+ * occupies a GPU for half an hour — and the failure would surface only after
+ * the job had been queued and dispatched.
+ *
+ * Returns the normalised size and the resolution bucket it lands in.
+ */
+export function checkSize(
+  value: string,
+  allowed: readonly Resolution[],
+): { size: string; resolution: Resolution } | null {
+  const match = /^(\d{2,5})x(\d{2,5})$/.exec(value.trim());
+  if (!match) return null;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (width % 16 !== 0 || height % 16 !== 0) return null;
+
+  // Smallest bucket that fits wins, so a 480p-sized frame is not billed as 720p.
+  for (const resolution of allowed) {
+    if (
+      width * height <= PIXEL_BUDGET[resolution] &&
+      Math.max(width, height) <= MAX_DIMENSION[resolution]
+    ) {
+      return { size: `${width}x${height}`, resolution };
+    }
+  }
+  return null;
+}
+
 export function fitSize(width: number, height: number, resolution: Resolution): string {
   if (!(width > 0) || !(height > 0)) {
     throw new Error(`invalid image dimensions ${width}x${height}`);

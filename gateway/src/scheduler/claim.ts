@@ -6,7 +6,7 @@
  * moving part, and the CAS in `JobStore.claim` makes concurrent polls safe
  * without any locking.
  */
-import { getPipeline } from '../domain/pipelines.js';
+import { getModel } from '../domain/models.js';
 import type { Job, Pod } from '../domain/types.js';
 import type { JobStore } from '../db/jobs.js';
 import { newLeaseId } from '../lib/ids.js';
@@ -14,7 +14,7 @@ import { newLeaseId } from '../lib/ids.js';
 export interface Assignment {
   job_id: string;
   lease_id: string;
-  pipeline: string;
+  model: string;
   deadline_at: number;
   input: { url: string; sha256: string | null; bytes: number | null };
   sglang: { endpoint: string; fields: Record<string, string | number> };
@@ -37,8 +37,8 @@ export function freeSlots(pod: Pod, inFlight: number): number {
 
 /** Build the fully-resolved SGLang form fields for a job. The agent adds nothing. */
 export function assignmentFor(job: Job, leaseId: string): Assignment {
-  const spec = getPipeline(job.pipeline);
-  if (!spec) throw new Error(`job ${job.id} references unknown pipeline ${job.pipeline}`);
+  const spec = getModel(job.model);
+  if (!spec) throw new Error(`job ${job.id} references unknown model ${job.model}`);
 
   const fields: Record<string, string | number> = {
     prompt: job.params.prompt,
@@ -53,7 +53,7 @@ export function assignmentFor(job: Job, leaseId: string): Assignment {
   return {
     job_id: job.id,
     lease_id: leaseId,
-    pipeline: job.pipeline,
+    model: job.model,
     deadline_at: job.deadline_at,
     input: {
       url: `/agent/v1/jobs/${job.id}/input`,
@@ -71,8 +71,8 @@ export function assignmentFor(job: Job, leaseId: string): Assignment {
  * about itself — the weights it loaded decide what it can run.
  *
  * The loop deliberately *continues* past a job the pod can't run rather than
- * stopping: a queued job for a pipeline this pod doesn't serve must not
- * head-of-line-block one it does.
+ * stopping: a queued job for a model this pod hasn't loaded must not
+ * head-of-line-block one it has.
  */
 export function claimForPod(
   store: JobStore,
@@ -83,13 +83,12 @@ export function claimForPod(
 ): Assignment[] {
   if (slots <= 0) return [];
 
-  const serves = new Set(pod.pipelines);
   const assignments: Assignment[] = [];
 
   for (const job of store.listQueued(100)) {
     if (assignments.length >= slots) break;
-    if (!serves.has(job.pipeline)) continue;
-    if (!getPipeline(job.pipeline)) continue;
+    if (job.model !== pod.model) continue;
+    if (!getModel(job.model)) continue;
 
     const leaseId = newLeaseId();
     if (!store.claim(job.id, pod.pod_id, leaseId, now + leaseTtlMs, now)) {

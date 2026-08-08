@@ -16,7 +16,7 @@ nature — the address of the service should not be.
 ```
    client application                             rented GPU pod
         │                                    ┌─────────────────────────┐
-        │ POST /v1/jobs                      │ sglang serve            │
+        │ POST /v1/videos                    │ sglang serve            │
         │ X-Api-Key + CF-Access              │   127.0.0.1:8000        │
         ▼                                    │        ▲                │
  ┌──────────────────┐                        │        │ http           │
@@ -38,7 +38,7 @@ no port, no tunnel and no DNS record of their own.
 ## Job lifecycle
 
 ```
-        POST /v1/jobs
+        POST /v1/videos
               │
               ▼
         ┌──────────┐   a pod polls and claims it    ┌──────────┐
@@ -113,14 +113,14 @@ the backlog can clear inside that window converts "no capacity" into "a long
 wait followed by a timeout" — slower, more confusing, and you paid for the GPU
 time either way.
 
-So `POST /v1/jobs` returns `503` with `Retry-After` once the queue passes
+So `POST /v1/videos` returns `503` with `Retry-After` once the queue passes
 `MAX_QUEUE_DEPTH`, letting the caller fall back to another provider immediately.
 Set it high enough that it never fires in normal operation: clients generally treat
 any non-2xx as a hard failure for that shot.
 
 ## What the client cannot control
 
-`pipeline` is matched against a closed registry ([pipelines.ts]) and never
+`model` is matched against a closed registry ([models.ts]) and never
 reaches a model path, a LoRA path, or SGLang's runtime LoRA endpoints — an
 attacker-chosen HuggingFace repo loaded onto the GPU is `trust_remote_code`
 remote code execution. Duration, step count and guidance are gateway-owned and
@@ -128,7 +128,7 @@ clamped, because `seconds=600, steps=500` is a queue-starvation lever. The input
 must be image *bytes*; URLs are refused, so there is no path by which a
 client-supplied address becomes a fetch from the gateway or a pod.
 
-[pipelines.ts]: ../gateway/src/domain/pipelines.ts
+[models.ts]: ../gateway/src/domain/models.ts
 
 ## Storage
 
@@ -164,19 +164,18 @@ for any client. They are enforced by
 client parser and runs it against real gateway responses — so a refactor that
 breaks one of them fails the build rather than the integration:
 
-1. **Five states only** — `queued`, `running`, `completed`, `failed`,
+1. **Five statuses only** — `queued`, `in_progress`, `completed`, `failed`,
    `cancelled`. A client is entitled to treat an unknown state as an error, so
    the set must not grow without a coordinated change. There is deliberately no
-   `cancelling` state: a cancel in flight is a `running` job with a flag.
+   `cancelling` status: a cancel in flight is an `in_progress` video with a
+   flag. They are SGLang's statuses, which are OpenAI's.
    (`DELETE` may *report* `"state":"cancelling"` in its own response body; that
    is not the job's state.)
-2. **Artifact URLs are relative and served with a 200** — never a redirect to
-   object storage. A client that pins the host and refuses redirects (the
-   correct posture, since it sends credentials with the request) cannot follow
-   one. Offloading media to object storage is therefore a breaking change.
-   Artifact paths are also guaranteed to stay under
-   `/v1/outputs/<that job's id>/`, and clients should verify it independently.
-3. **Creation does not block** — `POST /v1/jobs` writes the job and returns
+2. **No server-supplied URLs** — the content lives at
+   `/v1/videos/<id>/content`, derived from the id the client already holds. The
+   API hands over no URL to follow, so a credential-sending client has nothing
+   to validate and a pod-controlled filename has nothing to steer.
+3. **Creation does not block** — `POST /v1/videos` writes the record and returns
    `202` without touching a pod, so it stays fast enough for a short client
    timeout even when no capacity exists.
 
@@ -200,13 +199,13 @@ Client (`X-Api-Key`):
 
 | Route | Purpose |
 |---|---|
-| `POST /v1/jobs` | Submit; returns 202 |
-| `GET /v1/jobs/:id` | Poll |
-| `GET /v1/jobs` | List (`?state=`, `?limit=`) |
-| `DELETE /v1/jobs/:id` | Cancel |
-| `GET /v1/jobs/:id/events` | Lifecycle audit trail |
-| `GET /v1/outputs/:jobId/:filename` | Download the clip |
-| `GET /v1/pipelines` | What this deployment can run |
+| `POST /v1/videos` | Create (multipart); returns 200 |
+| `GET /v1/videos/:id` | Poll |
+| `GET /v1/videos` | List (`?status=`, `?limit=`) |
+| `DELETE /v1/videos/:id` | Cancel |
+| `GET /v1/videos/:id/events` | Lifecycle audit trail |
+| `GET /v1/videos/:id/content` | Download the clip |
+| `GET /v1/models` | What the fleet is serving right now |
 
 Operator (`X-Admin-Key`, falling back to a client key):
 `GET /v1/pods`, `POST /v1/pods/:id/drain`.
@@ -231,6 +230,6 @@ nidora_oldest_queued_seconds    nidora_pod_slots_busy
 Adding automatic pod provisioning later is a matter of reading these and driving
 the Vast/RunPod APIs; nothing new needs instrumenting.
 
-`GET /v1/jobs/:id/events` answers "why did this job take fourteen minutes" with
+`GET /v1/videos/:id/events` answers "why did this take fourteen minutes" with
 a timestamped trail: `created → assigned → uploaded → completed`, including any
 `requeued` or `lease_expired` in between.

@@ -14,8 +14,8 @@ import { openDatabase } from './db/sqlite.js';
 import { Waiters } from './scheduler/waiters.js';
 import agentRoutes from './routes/agent.js';
 import healthRoutes from './routes/health.js';
-import jobRoutes from './routes/jobs.js';
-import outputRoutes from './routes/outputs.js';
+import videoRoutes from './routes/videos.js';
+import modelRoutes from './routes/models.js';
 import podRoutes from './routes/pods.js';
 import type { Db } from './db/sqlite.js';
 
@@ -89,8 +89,8 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
   });
 
   await app.register(healthRoutes, { ctx, version: VERSION });
-  await app.register(jobRoutes, { ctx });
-  await app.register(outputRoutes, { ctx });
+  await app.register(videoRoutes, { ctx });
+  await app.register(modelRoutes, { ctx });
   await app.register(podRoutes, { ctx });
   await app.register(agentRoutes, { ctx });
 

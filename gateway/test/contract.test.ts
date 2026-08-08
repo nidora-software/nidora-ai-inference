@@ -1,86 +1,88 @@
 /**
  * The contract guard.
  *
- * `parseJob` below is a deliberately *strict* model of how a well-written client
- * consumes this API, written against the documented contract in docs/api.md and
- * docs/gateway.md — not a copy of any particular client. Every gateway response,
- * in every job state, is run through it.
+ * `parseVideo` below is a deliberately *strict* model of how a well-written
+ * OpenAI-shaped client consumes this API, written against the documented
+ * contract in docs/api.md — not a copy of any particular client. Every gateway
+ * response, in every status, is run through it.
  *
- * The point is to make the contract executable. A refactor that renames a field,
- * changes a state string, or makes an artifact URL absolute fails here, at build
- * time, instead of silently breaking integrations at run time.
+ * The point is to make the contract executable. A refactor that renames a
+ * field, changes a status string, or starts emitting millisecond timestamps
+ * fails here, at build time, instead of silently breaking integrations at run
+ * time.
  *
- * Being strict is the whole design: it maps exactly the five documented states
- * and treats anything else as an error, and it refuses an artifact path that is
- * not this job's own output. Loosening it to make a test pass defeats the
- * purpose — change the gateway, or change the documented contract and the
- * clients along with it.
+ * Being strict is the whole design: it maps exactly the five documented
+ * statuses and treats anything else as an error. Loosening it to make a test
+ * pass defeats the purpose — change the gateway, or change the documented
+ * contract and the clients along with it.
  */
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import {
   agentHeaders,
   authHeaders,
-  createJobBody,
   makeHarness,
   pollBody,
+  registerPod,
+  submit,
+  MODEL,
   type Harness,
 } from './helpers.js';
 
-/** The five documented states, mapped to a generic client-side vocabulary. */
+/** The five documented statuses, mapped to a generic client-side vocabulary. */
 const STATUS_MAP: Record<string, string> = {
   queued: 'starting',
-  running: 'processing',
+  in_progress: 'processing',
   completed: 'succeeded',
   failed: 'failed',
   cancelled: 'canceled',
 };
 
-function baseUrl(cfg: { host: string }): string {
-  return cfg.host.replace(/\/+$/, '');
-}
-
-/**
- * A client sends credentials with the artifact request, so it must satisfy
- * itself that the path is this job's own output before following it — the
- * gateway validates, but a client should not have to trust that.
- */
-function safeArtifactPath(url: unknown, jobId: string): boolean {
-  if (typeof url !== 'string') return false;
-  if (url.includes('..') || url.includes('\\') || url.includes('%')) return false;
-  const expected = `/v1/outputs/${jobId}/`;
-  if (!url.startsWith(expected)) return false;
-  return /^[A-Za-z0-9._-]+$/.test(url.slice(expected.length));
-}
-
-/** Returns null when the payload is not a job a strict client would accept. */
-function parseJob(payload: unknown, cfg: { host: string }) {
+/** Returns null when the payload is not a video a strict client would accept. */
+function parseVideo(payload: unknown) {
   if (typeof payload !== 'object' || payload === null) return null;
   const raw = payload as Record<string, unknown>;
-  if (typeof raw.id !== 'string' || raw.id === '') return null;
-  const status = typeof raw.state === 'string' ? STATUS_MAP[raw.state] : undefined;
+  if (raw.object !== 'video') return null;
+  if (typeof raw.id !== 'string' || !/^video_[0-9a-f]{12}$/.test(raw.id)) return null;
+  if (typeof raw.model !== 'string' || raw.model === '') return null;
+
+  const status = typeof raw.status === 'string' ? STATUS_MAP[raw.status] : undefined;
   if (!status) return null;
 
-  let outputUrl: string | null = null;
-  if (Array.isArray(raw.artifacts) && raw.artifacts.length > 0) {
-    const first = raw.artifacts[0] as Record<string, unknown>;
-    if (safeArtifactPath(first?.url, raw.id)) {
-      outputUrl = `${baseUrl(cfg)}${first.url as string}`;
-    }
+  // Unix seconds, not milliseconds: a client that multiplies by 1000 to build a
+  // Date must not land in the year 57000.
+  if (!Number.isInteger(raw.created_at)) return null;
+  const createdAt = raw.created_at as number;
+  if (createdAt < 1_000_000_000 || createdAt > 4_000_000_000) return null;
+
+  // An integer percentage, like OpenAI's — never a 0-1 fraction.
+  if (!Number.isInteger(raw.progress)) return null;
+  const progress = raw.progress as number;
+  if (progress < 0 || progress > 100) return null;
+
+  let error: string | null = null;
+  if (raw.error !== null) {
+    if (typeof raw.error !== 'object' || raw.error === null) return null;
+    const err = raw.error as Record<string, unknown>;
+    if (typeof err.code !== 'string' || typeof err.message !== 'string') return null;
+    error = err.message;
   }
+
   return {
     id: raw.id,
+    model: raw.model as string,
     status,
-    outputUrl,
-    error: typeof raw.error === 'string' && raw.error ? raw.error : null,
+    progress,
+    createdAt,
+    error,
+    /** The download path is derived from the id — the server never hands one over. */
+    contentUrl: `/v1/videos/${raw.id}/content`,
   };
 }
 
-const CFG = { host: 'https://inference.example.com' };
-
 describe('client contract', () => {
-  // A fresh harness per test: these cases claim jobs from the queue, and a
-  // shared queue would let one test's poll pick up another test's job.
+  // A fresh harness per test: these cases claim work from the queue, and a
+  // shared queue would let one test's poll pick up another test's video.
   let h: Harness;
   beforeEach(async () => {
     h = await makeHarness();
@@ -89,104 +91,81 @@ describe('client contract', () => {
     await h.cleanup();
   });
 
-  it('parses a freshly created job as "starting"', async () => {
-    const created = await h.app.inject({
-      method: 'POST',
-      url: '/v1/jobs',
-      headers: authHeaders,
-      payload: createJobBody(),
-    });
-    assert.equal(created.statusCode, 202);
+  /** Register a warming pod, so create is admitted but nothing claims it yet. */
+  const admit = () => registerPod(h, { pod_id: 'pod-admission', sglang_ready: false });
 
-    const job = parseJob(created.json(), CFG);
-    assert.ok(job, 'a strict client must be able to parse the create response');
-    assert.equal(job.status, 'starting');
-    assert.match(job.id, /^j_[0-9a-f]{12}$/);
-    assert.equal(job.outputUrl, null);
-    assert.equal(job.error, null);
+  it('parses a freshly created video as "starting"', async () => {
+    await admit();
+    const created = await submit(h);
+    assert.equal(created.statusCode, 200);
+
+    const video = parseVideo(created.json());
+    assert.ok(video, 'a strict client must be able to parse the create response');
+    assert.equal(video.status, 'starting');
+    assert.equal(video.model, MODEL);
+    assert.equal(video.progress, 0);
+    assert.equal(video.error, null);
   });
 
-  it('parses every reachable state, and never emits an unmapped one', async () => {
-    // A cancel of a queued job — the only terminal state reachable without a pod.
-    const created = await h.app.inject({
-      method: 'POST',
-      url: '/v1/jobs',
-      headers: authHeaders,
-      payload: createJobBody(),
-    });
+  it('parses every reachable status, and never emits an unmapped one', async () => {
+    await admit();
+    const created = await submit(h);
     const id = created.json().id as string;
 
+    // A cancel of a queued video — the only terminal status reachable with no
+    // warm pod in the fleet.
     const cancelled = await h.app.inject({
       method: 'DELETE',
-      url: `/v1/jobs/${id}`,
+      url: `/v1/videos/${id}`,
       headers: authHeaders,
     });
     assert.equal(cancelled.statusCode, 200);
 
     const fetched = await h.app.inject({
       method: 'GET',
-      url: `/v1/jobs/${id}`,
+      url: `/v1/videos/${id}`,
       headers: authHeaders,
     });
-    const job = parseJob(fetched.json(), CFG);
-    assert.ok(job, 'a cancelled job must still parse');
-    assert.equal(job.status, 'canceled');
+    const video = parseVideo(fetched.json());
+    assert.ok(video, 'a cancelled video must still parse');
+    assert.equal(video.status, 'canceled');
   });
 
-  it('reports a running job as "processing", never as "cancelling"', async () => {
-    const created = await h.app.inject({
-      method: 'POST',
-      url: '/v1/jobs',
-      headers: authHeaders,
-      payload: createJobBody(),
-    });
+  it('reports a cancelling video as "processing", never as "cancelling"', async () => {
+    await registerPod(h);
+    const created = await submit(h);
     const id = created.json().id as string;
+    await registerPod(h); // the pod claims it
 
-    // A pod claims it.
-    await h.app.inject({
-      method: 'POST',
-      url: '/agent/v1/poll',
-      headers: agentHeaders,
-      payload: pollBody(),
-    });
-
-    // The client cancels mid-flight. The DELETE body may say "cancelling",
-    // but the job's own state must remain one a client can map.
+    // The client cancels mid-flight. There is no sixth status to leak: the
+    // video stays in_progress until the pod acknowledges.
     const del = await h.app.inject({
       method: 'DELETE',
-      url: `/v1/jobs/${id}`,
+      url: `/v1/videos/${id}`,
       headers: authHeaders,
     });
-    assert.equal(del.json().state, 'cancelling');
+    assert.equal(del.statusCode, 202);
+    assert.equal(del.json().status, 'in_progress');
 
     const fetched = await h.app.inject({
       method: 'GET',
-      url: `/v1/jobs/${id}`,
+      url: `/v1/videos/${id}`,
       headers: authHeaders,
     });
-    assert.equal(fetched.json().state, 'running');
-    const job = parseJob(fetched.json(), CFG);
-    assert.ok(job, 'a job being cancelled must not break a strict client');
-    assert.equal(job.status, 'processing');
+    const video = parseVideo(fetched.json());
+    assert.ok(video, 'a video being cancelled must not break a strict client');
+    assert.equal(video.status, 'processing');
   });
 
-  it('yields a relative artifact URL a client can resolve and download', async () => {
-    const created = await h.app.inject({
-      method: 'POST',
-      url: '/v1/jobs',
-      headers: authHeaders,
-      payload: createJobBody(),
-    });
+  it('serves the media at the conventional content path', async () => {
+    await registerPod(h, { pod_id: 'pod-artifact' });
+    const created = await submit(h);
     const id = created.json().id as string;
 
-    const poll = await h.app.inject({
-      method: 'POST',
-      url: '/agent/v1/poll',
-      headers: agentHeaders,
-      payload: pollBody({ pod_id: 'pod-artifact' }),
-    });
-    const assignment = poll.json().assign[0];
+    const poll = await registerPod(h, { pod_id: 'pod-artifact' });
+    const assignment = poll.assign[0];
     assert.equal(assignment.job_id, id);
+    assert.equal(assignment.model, MODEL);
 
     const media = Buffer.from('fake mp4 bytes');
     const upload = await h.app.inject({
@@ -206,20 +185,24 @@ describe('client contract', () => {
 
     const fetched = await h.app.inject({
       method: 'GET',
-      url: `/v1/jobs/${id}`,
+      url: `/v1/videos/${id}`,
       headers: authHeaders,
     });
-    const job = parseJob(fetched.json(), CFG);
-    assert.ok(job);
-    assert.equal(job.status, 'succeeded');
-    // A client builds `${host}${url}`, requires https, pins the host, and
-    // fetches with redirect:'error'. A relative URL on our own host is the
-    // only shape that survives all three checks.
-    assert.equal(job.outputUrl, `https://inference.example.com/v1/outputs/${id}/output.mp4`);
+    const video = parseVideo(fetched.json());
+    assert.ok(video);
+    assert.equal(video.status, 'succeeded');
+    assert.equal(video.progress, 100);
 
+    // A completed video advertises when its media is swept, so a client knows
+    // how long it has to download.
+    assert.ok(fetched.json().expires_at > fetched.json().created_at);
+
+    // The path is built from the id alone. There is no server-supplied URL to
+    // validate, which is what makes a poisoned filename structurally unable to
+    // reach a client's authenticated fetch.
     const download = await h.app.inject({
       method: 'GET',
-      url: `/v1/outputs/${id}/output.mp4`,
+      url: video.contentUrl,
       headers: authHeaders,
     });
     assert.equal(download.statusCode, 200);
@@ -227,50 +210,65 @@ describe('client contract', () => {
     assert.deepEqual(download.rawPayload, media);
   });
 
-  it('a strict client refuses a poisoned artifact path even if one were emitted', () => {
-    // Belt to the gateway's braces: the gateway now validates the filename, but
-    // a client must independently refuse anything outside this job's own
-    // output path. `new URL()` collapses `..` before a host check, so a
-    // traversal that reached a client would be fetched with its API key.
-    for (const url of [
-      '/v1/outputs/j_aaaaaaaaaaaa/../../jobs',
-      '/v1/outputs/j_aaaaaaaaaaaa/../j_OTHER/output.mp4',
-      '/v1/jobs',
-      '/v1/outputs/j_OTHER/output.mp4',
-      '/v1/outputs/j_aaaaaaaaaaaa/sub/dir.mp4',
-      '/v1/outputs/j_aaaaaaaaaaaa/..%2f..%2fjobs',
-      'https://evil.example/clip.mp4',
+  it('rejects a payload a strict client could not map', () => {
+    const good = {
+      id: 'video_aaaaaaaaaaaa',
+      object: 'video',
+      model: MODEL,
+      status: 'completed',
+      progress: 100,
+      created_at: 1_800_000_000,
+      error: null,
+    };
+    assert.ok(parseVideo(good));
+
+    for (const bad of [
+      { ...good, object: 'job' },
+      { ...good, id: 'j_aaaaaaaaaaaa' },
+      { ...good, status: 'running' },
+      { ...good, status: 'cancelling' },
+      { ...good, progress: 0.5 },
+      { ...good, progress: 101 },
+      { ...good, created_at: 1_800_000_000_000 }, // milliseconds
+      { ...good, error: 'a bare string' },
+      { ...good, model: '' },
     ]) {
-      const job = parseJob(
-        {
-          id: 'j_aaaaaaaaaaaa',
-          state: 'completed',
-          error: null,
-          artifacts: [{ url }],
-        },
-        CFG,
-      );
-      assert.ok(job, 'the job itself must still parse');
-      assert.equal(job.outputUrl, null, `${url} must not become a download target`);
+      assert.equal(parseVideo(bad), null, `${JSON.stringify(bad)} must not parse`);
     }
   });
 
+  it('lists videos in the OpenAI list envelope', async () => {
+    await admit();
+    await submit(h);
+    const list = await h.app.inject({ method: 'GET', url: '/v1/videos', headers: authHeaders });
+    const body = list.json();
+    assert.equal(body.object, 'list');
+    assert.equal(body.data.length, 1);
+    assert.ok(parseVideo(body.data[0]), 'every listed item must parse as a video');
+  });
+
+  it('advertises only models the fleet is actually serving', async () => {
+    const empty = await h.app.inject({ method: 'GET', url: '/v1/models', headers: authHeaders });
+    assert.deepEqual(empty.json(), { object: 'list', data: [] });
+
+    await registerPod(h);
+    const served = await h.app.inject({ method: 'GET', url: '/v1/models', headers: authHeaders });
+    const body = served.json();
+    assert.equal(body.object, 'list');
+    assert.equal(body.data.length, 1);
+    assert.equal(body.data[0].id, MODEL);
+    assert.equal(body.data[0].object, 'model');
+    assert.equal(body.data[0].task, 'i2v');
+    assert.equal(body.data[0].pods_ready, 1);
+  });
+
   it('exposes a failure message through the field a client reads', async () => {
-    const created = await h.app.inject({
-      method: 'POST',
-      url: '/v1/jobs',
-      headers: authHeaders,
-      payload: createJobBody(),
-    });
+    await registerPod(h, { pod_id: 'pod-fail' });
+    const created = await submit(h);
     const id = created.json().id as string;
 
-    const poll = await h.app.inject({
-      method: 'POST',
-      url: '/agent/v1/poll',
-      headers: agentHeaders,
-      payload: pollBody({ pod_id: 'pod-fail' }),
-    });
-    const { lease_id } = poll.json().assign[0];
+    const poll = await registerPod(h, { pod_id: 'pod-fail' });
+    const { lease_id } = poll.assign[0];
 
     await h.app.inject({
       method: 'POST',
@@ -281,12 +279,12 @@ describe('client contract', () => {
 
     const fetched = await h.app.inject({
       method: 'GET',
-      url: `/v1/jobs/${id}`,
+      url: `/v1/videos/${id}`,
       headers: authHeaders,
     });
-    const job = parseJob(fetched.json(), CFG);
-    assert.ok(job);
-    assert.equal(job.status, 'failed');
-    assert.equal(job.error, 'sglang rejected the request (422)');
+    const video = parseVideo(fetched.json());
+    assert.ok(video);
+    assert.equal(video.status, 'failed');
+    assert.equal(video.error, 'sglang rejected the request (422)');
   });
 });

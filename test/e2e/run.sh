@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # End-to-end check against the stack in deploy/compose.e2e.yml.
 #
-# Submits a real job through the client API, waits for a pod to pick it up and
-# a clip to come back, then verifies the bytes match the fixture the mock
-# SGLang server serves. No GPU involved.
+# Submits a real video through the client API — the same OpenAI-shaped surface
+# SGLang exposes — waits for a pod to pick it up and a clip to come back, then
+# verifies the bytes match the fixture the mock SGLang server serves. No GPU.
 #
 #   docker compose -f deploy/compose.e2e.yml up --build -d
 #   ./test/e2e/run.sh
@@ -41,8 +41,8 @@ say "pod ready"
 
 say "building the request"
 # A real 64x64 PNG, since the gateway probes the header to compute the frame size.
-python3 - "$workdir/body.json" <<'PY'
-import base64, json, struct, sys, zlib
+python3 - "$workdir/input.png" <<'PY'
+import struct, sys, zlib
 
 def chunk(kind, data):
     body = kind + data
@@ -54,57 +54,53 @@ raw = b"".join(b"\x00" + b"\x80\x40\x20" * w for _ in range(h))
 png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
        + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
-json.dump({
-    "pipeline": "wan22-i2v",
-    "params": {
-        "image": "data:image/png;base64," + base64.b64encode(png).decode(),
-        "prompt": "the woman smiles and waves at the camera",
-        "negative_prompt": "",
-        "resolution": "480p",
-    },
-}, open(sys.argv[1], "w"))
+open(sys.argv[1], "wb").write(png)
 PY
 
-say "submitting the job"
-create="$(curl_api -X POST "$GATEWAY/v1/jobs" -H 'content-type: application/json' \
-    --data-binary @"$workdir/body.json")"
-job_id="$(printf '%s' "$create" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
-state="$(printf '%s' "$create" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
-[ "$state" = "queued" ] || fail "expected a queued job, got $state"
-say "job $job_id queued"
+say "checking the fleet advertises the model"
+curl_api "$GATEWAY/v1/models" | grep -q "Wan2.2-I2V-A14B-Diffusers" \
+    || fail "/v1/models does not list the model the pod is serving"
+
+say "submitting the video"
+create="$(curl_api -X POST "$GATEWAY/v1/videos" \
+    -F "model=Wan-AI/Wan2.2-I2V-A14B-Diffusers" \
+    -F "prompt=the woman smiles and waves at the camera" \
+    -F "input_reference=@$workdir/input.png;type=image/png")"
+video_id="$(printf '%s' "$create" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+status="$(printf '%s' "$create" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')"
+[ "$status" = "queued" ] || fail "expected a queued video, got $status"
+case "$video_id" in
+    video_*) ;;
+    *) fail "expected an OpenAI-shaped id, got $video_id" ;;
+esac
+say "video $video_id queued"
 
 say "polling for completion"
 deadline=$(( $(date +%s) + TIMEOUT_S ))
 while :; do
-    payload="$(curl_api "$GATEWAY/v1/jobs/$job_id")"
-    state="$(printf '%s' "$payload" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
-    case "$state" in
+    payload="$(curl_api "$GATEWAY/v1/videos/$video_id")"
+    status="$(printf '%s' "$payload" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')"
+    case "$status" in
         completed) break ;;
         failed|cancelled)
             printf '%s\n' "$payload" >&2
-            fail "job ended as $state"
+            fail "video ended as $status"
             ;;
     esac
-    [ "$(date +%s)" -lt "$deadline" ] || fail "job did not finish within ${TIMEOUT_S}s (last state: $state)"
+    [ "$(date +%s)" -lt "$deadline" ] || fail "video did not finish within ${TIMEOUT_S}s (last status: $status)"
     sleep 2
 done
-say "job completed"
+say "video completed"
 
-# A client reads artifacts[0].url and requires it to be relative — an
-# absolute URL or a redirect would break a credential-sending client.
-url="$(printf '%s' "$payload" | python3 -c 'import json,sys; print(json.load(sys.stdin)["artifacts"][0]["url"])')"
-case "$url" in
-    /*) ;;
-    *) fail "artifact url must be relative, got $url" ;;
-esac
-
-say "downloading $url"
-curl_api "$GATEWAY$url" -o "$workdir/out.mp4"
+# The content path is derived from the id — the server hands over no URL, so a
+# credential-sending client has nothing to validate before following it.
+say "downloading the content"
+curl_api "$GATEWAY/v1/videos/$video_id/content" -o "$workdir/out.mp4"
 cmp -s "$workdir/out.mp4" "$fixture" || fail "the downloaded clip does not match the fixture"
 
 say "checking the queue drained"
 depth="$(curl -fsS "$GATEWAY/health" | python3 -c 'import json,sys; print(json.load(sys.stdin)["queue_depth"])')"
 [ "$depth" = "0" ] || fail "queue_depth should be 0 after the job finished, got $depth"
 
-printf '\033[32mPASS\033[0m — job %s generated and downloaded %s bytes\n' \
-    "$job_id" "$(wc -c < "$workdir/out.mp4" | tr -d ' ')"
+printf '\033[32mPASS\033[0m — video %s generated and downloaded %s bytes\n' \
+    "$video_id" "$(wc -c < "$workdir/out.mp4" | tr -d ' ')"

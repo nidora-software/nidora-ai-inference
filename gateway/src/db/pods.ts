@@ -8,7 +8,7 @@
  */
 import type { Db } from './sqlite.js';
 import type { Pod } from '../domain/types.js';
-import { pipelinesForModel } from '../domain/pipelines.js';
+import { resolveModelId } from '../domain/models.js';
 
 interface PodRow {
   pod_id: string;
@@ -35,10 +35,10 @@ function hydrate(row: PodRow): Pod {
     agent_version: row.agent_version,
     model_path: row.model_path,
     lora_path: row.lora_path,
-    // Derived, not stored: the registry is the authority on what a model can
-    // run, so adding a pipeline to an existing model takes effect immediately
-    // instead of waiting for every pod to re-register.
-    pipelines: pipelinesForModel(row.model_path),
+    // Derived, not stored: the registry is the authority on which models it
+    // recognises, so registering a new one takes effect immediately instead of
+    // waiting for every pod to re-register.
+    model: resolveModelId(row.model_path),
     gpu: row.gpu,
     max_in_flight: row.max_in_flight,
     sglang_ready: row.sglang_ready === 1,

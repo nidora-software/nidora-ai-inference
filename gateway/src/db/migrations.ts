@@ -17,7 +17,7 @@ export const MIGRATIONS: Migration[] = [
     sql: /* sql */ `
       CREATE TABLE jobs (
         id                  TEXT PRIMARY KEY,
-        pipeline            TEXT NOT NULL,
+        model               TEXT NOT NULL,
         params              TEXT NOT NULL,          -- JSON; never holds image bytes
         input_path          TEXT,
         input_sha256        TEXT,

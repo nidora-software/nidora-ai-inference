@@ -49,7 +49,7 @@ for free.
   "sglang_ready": true,
   "wait_s": 25,
   "in_flight": [
-    { "job_id": "j_ab12cd34ef56", "lease_id": "…", "progress": 0.4,
+    { "job_id": "video_ab12cd34ef56", "lease_id": "…", "progress": 0.4,
       "phase": "generating", "upstream_id": "video_…" }
   ]
 }
@@ -59,8 +59,8 @@ for free.
 server, re-checked every cycle. While it is false the gateway assigns nothing —
 see [gateway.md](gateway.md#readiness-is-not-liveness).
 
-The pod does **not** say which pipelines it serves. `model_path` is what it
-loaded, and the gateway resolves that against its pipeline registry — a pod
+The pod does **not** say which models it serves. `model_path` is what it
+loaded, and the gateway resolves that against its model registry — a pod
 cannot claim a capability its weights don't have, and a mistyped model simply
 takes no work instead of failing every job it is sent.
 
@@ -96,11 +96,11 @@ there is nothing to do, and returns immediately when a job arrives.
 
 ```json
 {
-  "job_id": "j_ab12cd34ef56",
+  "job_id": "video_ab12cd34ef56",
   "lease_id": "6f1c…",
-  "pipeline": "wan22-i2v",
+  "model": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
   "deadline_at": 1786182051349,
-  "input": { "url": "/agent/v1/jobs/j_ab12cd34ef56/input",
+  "input": { "url": "/agent/v1/jobs/video_ab12cd34ef56/input",
              "sha256": "…", "bytes": 184320 },
   "sglang": {
     "endpoint": "/v1/videos",
@@ -121,7 +121,7 @@ a dumb executor and invents nothing: frame sizing, defaults, the negative prompt
 and clamping all happen gateway-side. That is deliberate — retuning generation
 is a gateway redeploy, not a 30-minute CUDA image rebuild. It also means a field
 name that drifts between SGLang versions is fixed by editing
-[`pipelines.ts`](../gateway/src/domain/pipelines.ts), not by rebuilding pods.
+[`models.ts`](../gateway/src/domain/models.ts), not by rebuilding pods.
 
 ## `GET /agent/v1/jobs/:id/input?lease_id=…`
 

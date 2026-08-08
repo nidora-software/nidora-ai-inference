@@ -1,14 +1,15 @@
 /**
- * Decoding and validating the client's input image.
+ * Validating the client's input image.
  *
- * SECURITY: only bytes are accepted — a `data:` URI or bare base64. URLs are
- * refused outright. SGLang's `reference_url` field is never exposed, so there
- * is no path by which a client-supplied URL reaches the gateway's or a pod's
- * network (`reference_url: http://169.254.169.254/...` would otherwise hand out
- * the host's cloud instance-role credentials).
+ * SECURITY: only uploaded bytes are accepted — the image arrives as a multipart
+ * file part, exactly as SGLang takes it. URLs are refused by construction:
+ * there is no field to put one in. SGLang's `reference_url` is never exposed,
+ * so no client-supplied URL can reach the gateway's or a pod's network
+ * (`reference_url: http://169.254.169.254/...` would otherwise hand out the
+ * host's cloud instance-role credentials).
  *
  * The declared mime type is likewise ignored; the format is sniffed from magic
- * bytes so a `data:image/jpeg` label can't smuggle something else past us.
+ * bytes so an `image/jpeg` part header can't smuggle something else past us.
  */
 import { createHash } from 'node:crypto';
 
@@ -22,8 +23,6 @@ export interface DecodedImage {
 }
 
 export class InputError extends Error {}
-
-const DATA_URI = /^data:([\w.+-]+\/[\w.+-]+)?(;charset=[\w-]+)?;base64,/i;
 
 function sniff(bytes: Buffer): DecodedImage['format'] | null {
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
@@ -51,30 +50,14 @@ const META: Record<DecodedImage['format'], { extension: string; mediaType: strin
   webp: { extension: 'webp', mediaType: 'image/webp' },
 };
 
-export function decodeImage(raw: unknown, maxBytes: number): DecodedImage {
-  if (typeof raw !== 'string' || raw === '') {
-    throw new InputError('params.image is required and must be a base64 data URI');
-  }
-  if (/^[a-z][a-z0-9+.-]*:/i.test(raw) && !DATA_URI.test(raw)) {
-    throw new InputError(
-      'params.image must be image bytes as a base64 data URI — URLs are not accepted',
-    );
-  }
-
-  const base64 = raw.replace(DATA_URI, '');
-  // 4 base64 chars per 3 bytes; reject before allocating the decoded copy.
-  if (Math.floor((base64.length * 3) / 4) > maxBytes) {
-    throw new InputError(`params.image exceeds the ${maxBytes} byte limit`);
-  }
-
-  const bytes = Buffer.from(base64, 'base64');
-  if (bytes.length === 0) throw new InputError('params.image did not decode to any bytes');
+export function readImage(bytes: Buffer, maxBytes: number): DecodedImage {
+  if (bytes.length === 0) throw new InputError('input_reference is empty');
   if (bytes.length > maxBytes) {
-    throw new InputError(`params.image exceeds the ${maxBytes} byte limit`);
+    throw new InputError(`input_reference exceeds the ${maxBytes} byte limit`);
   }
 
   const format = sniff(bytes);
-  if (!format) throw new InputError('params.image is not a JPEG, PNG or WebP image');
+  if (!format) throw new InputError('input_reference is not a JPEG, PNG or WebP image');
 
   return {
     bytes,
