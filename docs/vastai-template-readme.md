@@ -1,7 +1,8 @@
 # Nidora AI Inference — Wan 2.2 Image-to-Video (SGLang Diffusion)
 
 Self-hosted **Wan 2.2 I2V A14B** with **Lightning 4-step distill LoRAs**,
-served by SGLang Diffusion's OpenAI-compatible async video API.
+served by SGLang Diffusion. Pods join a fleet behind the Nidora inference
+gateway and pull work from it — no inbound networking required.
 
 - Image: `erenck/nidora-ai-inference:latest` (also on GHCR)
 - Source: https://github.com/nidora-software/nidora-ai-inference
@@ -14,49 +15,59 @@ served by SGLang Diffusion's OpenAI-compatible async video API.
 | GPU | **H100 / A100 80 GB** | bf16 A14B needs ~70 GB resident for full speed |
 | System RAM | **128 GB+** | fp32 snapshot stages through RAM at load; Vast enforces the allocation as a hard limit — less gets OOM-killed (exit -9). Filter offers by CPU RAM. |
 | Disk | 20 GB container + **300 GB volume** at `/workspace` | ~126 GB model snapshot lives in the volume's HF cache |
-| Ports | 8000/tcp | optional with a Cloudflare Tunnel |
+| Ports | none | gateway mode is outbound-only |
 | Host CUDA | ≥ 12.9 | set Min CUDA in the offer filter |
 
-## Template setup
+Also filter for high `inet_down` — the one-time snapshot download dominates
+first-boot time.
+
+## Template setup (gateway mode)
 
 - **Image**: `erenck/nidora-ai-inference:latest`
 - **Launch mode**: Docker ENTRYPOINT, args empty
 - **Volume**: 300 GB at `/workspace`
-- **Ports**: 8000/tcp (omit if tunnel-only)
+- **Ports**: none — do not map 8000
 - **Environment**:
   ```
   -e MODEL_PATH=Wan-AI/Wan2.2-I2V-A14B-Diffusers   # REQUIRED
   -e LORA_PATH=lightx2v/Wan2.2-Distill-Loras       # needed for 4-step generation
-  -e CF_TUNNEL_TOKEN=<token>      # stable HTTPS hostname (strongly recommended)
-  -e SGLANG_EXTRA_ARGS=...        # optional tuning, see below
+  -e SGLANG_HOST=127.0.0.1                         # keep sglang off the network
+  -e GATEWAY_URL=https://<your-hostname>
+  -e GATEWAY_AGENT_SECRET=<fleet agent secret>
+  -e CF_ACCESS_CLIENT_ID=<service-token-id>.access
+  -e CF_ACCESS_CLIENT_SECRET=<service-token-secret>
+  -e AGENT_PIPELINES=wan22-i2v
+  -e SGLANG_EXTRA_ARGS=...                         # optional tuning, see below
   ```
 
-**Security**: the SGLang diffusion server has **no built-in API auth**. Run
-tunnel-only (omit the 8000 port mapping) and protect the hostname with
-**Cloudflare Access** (service token) — see
-[deploy-pods.md](deploy-pods.md). Only map port 8000 for trusted-network or
-debugging use.
+**Security**: the SGLang diffusion server has **no built-in API auth**. In
+gateway mode it binds to `127.0.0.1` and nothing outside the container can
+reach it. Do not map port 8000; there is no reason to in this mode.
+
+`POD_ID` is auto-detected from Vast's container id, which is stable across
+restarts — leave it unset.
 
 ## First boot
 
 The server downloads the model snapshot into `/workspace/hf` (one-time per
-volume, ~126 GB — pick offers with high `inet_down`), loads and warms it
-(`--warmup-mode server`), then serves. Later boots skip the download and are
-ready in minutes. Readiness: `GET /health` answers once warmup is done.
+volume, ~126 GB), loads and warms it (`--warmup-mode server`), then serves.
+Later boots skip the download and are ready in minutes.
+
+During the whole load the agent reports the pod as not-ready and the gateway
+sends it no work — jobs wait in the queue rather than failing against a cold
+pod. Watch it arrive:
+
+```bash
+curl -s https://<your-hostname>/v1/pods -H "X-Api-Key: $KEY" \
+  -H "CF-Access-Client-Id: $CF_ACCESS_ID" -H "CF-Access-Client-Secret: $CF_ACCESS_SECRET" | jq
+```
+
+If `sglang_ready` never turns true, check the container logs for an exit code
+of -9 — that is the RAM limit, not a configuration problem.
 
 ## Usage
 
-See [api.md](api.md). Short version:
-
-```bash
-curl -s http://<IP>:<PORT>/v1/videos \
-  -H "CF-Access-Client-Id: $CF_ACCESS_ID" \
-  -H "CF-Access-Client-Secret: $CF_ACCESS_SECRET" \
-  -F input_reference=@input.jpg \
-  -F prompt="the woman smiles and waves" \
-  -F size="480x832" -F seconds=5
-# poll GET /v1/videos/{id}; download /v1/videos/{id}/content
-```
+Clients talk to the gateway, never to the pod. See [api.md](api.md).
 
 ## Tuning (SGLANG_EXTRA_ARGS)
 
@@ -67,8 +78,15 @@ curl -s http://<IP>:<PORT>/v1/videos \
 
 ## Tips
 
-- The volume outlives the instance — destroy/recreate pods freely, the
+- The volume outlives the instance — destroy and recreate pods freely, the
   download happens once.
-- Never expose port 8000 publicly — the API has no built-in auth; use the
-  tunnel + Cloudflare Access.
+- Drain before destroying (`POST /v1/pods/<id>/drain`) so in-flight clips
+  finish; a hard destroy is safe too, it just costs a retry.
 - Pin a commit-SHA image tag for reproducibility; `:latest` tracks main.
+
+## Standalone mode
+
+To run a pod as its own public endpoint instead of joining the fleet, set
+`CF_TUNNEL_TOKEN` and leave `GATEWAY_URL` unset — see
+[deploy-pods.md](deploy-pods.md#standalone-mode). Cloudflare Access is
+mandatory in that mode.

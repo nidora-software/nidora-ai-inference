@@ -1,0 +1,355 @@
+/**
+ * The pod-agent control plane.
+ *
+ * Four endpoints, all authenticated with the shared agent secret and all
+ * fenced by a lease id. Pods dial out to these — nothing ever connects to a
+ * pod — so a rented GPU box needs no inbound reachability, no tunnel of its
+ * own, and no DNS record.
+ *
+ *   POST /agent/v1/poll                  register + heartbeat + renew + claim
+ *   GET  /agent/v1/jobs/:id/input        the source image bytes
+ *   POST /agent/v1/jobs/:id/artifact     the generated mp4 (raw body)
+ *   POST /agent/v1/jobs/:id/result       terminal outcome
+ *
+ * ## Why long-poll and not a WebSocket
+ *
+ * The correctness requirements (leases, fencing, requeue) are identical either
+ * way; a socket would only shave the dispatch latency. What it would add is a
+ * reconnect state machine, per-connection send buffers, and a hard dependency
+ * on Cloudflare's *undocumented* WebSocket idle timeout. A 25-second poll sits
+ * comfortably inside the documented 125-second proxy read timeout and needs
+ * none of that.
+ */
+import { createReadStream } from 'node:fs';
+import type { Readable } from 'node:stream';
+import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
+import type { AppContext } from '../context.js';
+import { claimForPod, freeSlots, type Assignment } from '../scheduler/claim.js';
+import { artifactUrl } from '../domain/serialize.js';
+import { isSafeFilename } from '../domain/filenames.js';
+import { newSessionId } from '../lib/ids.js';
+import { ArtifactTooLarge } from '../artifacts/store.js';
+import type { Artifact } from '../domain/types.js';
+
+interface InFlightReport {
+  job_id?: unknown;
+  lease_id?: unknown;
+  progress?: unknown;
+  phase?: unknown;
+  upstream_id?: unknown;
+}
+
+interface PollBody {
+  pod_id?: unknown;
+  agent_version?: unknown;
+  pipelines?: unknown;
+  max_in_flight?: unknown;
+  model_path?: unknown;
+  lora_path?: unknown;
+  gpu?: unknown;
+  sglang_ready?: unknown;
+  in_flight?: unknown;
+  wait_s?: unknown;
+}
+
+interface PollResponse {
+  session_id: string;
+  lease_ttl_s: number;
+  poll_wait_s: number;
+  assign: Assignment[];
+  /** Jobs the pod should stop working on because a client cancelled them. */
+  cancel: string[];
+  /** Jobs the pod thinks it owns but no longer does — abandon them locally. */
+  orphan: string[];
+  drain: boolean;
+}
+
+function str(value: unknown): string | null {
+  return typeof value === 'string' && value !== '' ? value : null;
+}
+
+export default async function agentRoutes(
+  app: FastifyInstance,
+  opts: FastifyPluginOptions & { ctx: AppContext },
+): Promise<void> {
+  const { ctx } = opts;
+  const { config, jobs, pods, artifacts, waiters } = ctx;
+
+  app.addHook('preHandler', ctx.requireAgentSecret);
+
+  // Artifact uploads arrive as a raw media body. This parser hands the route
+  // the untouched stream so the bytes go to disk without ever being buffered
+  // in the heap; JSON parsing for the other routes is unaffected.
+  app.addContentTypeParser(
+    ['video/mp4', 'application/octet-stream'],
+    (_request, payload, done) => done(null, payload),
+  );
+
+  /**
+   * Registration, heartbeat, lease renewal, progress and dispatch in one round
+   * trip. Folding them together means an idle pod costs exactly one in-flight
+   * request and a busy pod renews its leases for free.
+   */
+  app.post<{ Body: PollBody }>('/agent/v1/poll', async (request, reply) => {
+    const body = request.body ?? {};
+    const podId = str(body.pod_id);
+    if (!podId) return reply.code(400).send({ detail: 'pod_id is required' });
+
+    const pipelines = Array.isArray(body.pipelines)
+      ? body.pipelines.filter((p): p is string => typeof p === 'string')
+      : [];
+    const now = Date.now();
+
+    const pod = pods.touch(
+      {
+        pod_id: podId,
+        session_id: newSessionId(),
+        agent_version: str(body.agent_version),
+        model_path: str(body.model_path),
+        lora_path: str(body.lora_path),
+        pipelines,
+        gpu: str(body.gpu),
+        max_in_flight: Math.max(
+          1,
+          typeof body.max_in_flight === 'number' ? Math.floor(body.max_in_flight) : 1,
+        ),
+        sglang_ready: body.sglang_ready === true,
+      },
+      now,
+    );
+
+    // Renew the lease on everything the agent still claims to be working on.
+    // A lease we no longer recognise means the job was requeued and possibly
+    // finished elsewhere: tell the agent to drop it rather than let it upload.
+    const reported = Array.isArray(body.in_flight) ? (body.in_flight as InFlightReport[]) : [];
+    const orphan: string[] = [];
+    const cancel: string[] = [];
+    const stillOwned = new Set<string>();
+
+    for (const item of reported) {
+      const jobId = str(item.job_id);
+      const leaseId = str(item.lease_id);
+      if (!jobId || !leaseId) continue;
+
+      const progress =
+        typeof item.progress === 'number' && item.progress >= 0 && item.progress <= 1
+          ? item.progress
+          : undefined;
+      const renewed = jobs.renewLease(
+        jobId,
+        leaseId,
+        now + config.leaseTtlMs,
+        progress,
+        str(item.upstream_id),
+      );
+      if (!renewed) {
+        orphan.push(jobId);
+        continue;
+      }
+      stillOwned.add(jobId);
+      if (jobs.get(jobId)?.cancel_requested) cancel.push(jobId);
+    }
+
+    // A pod that restarted its agent may have lost track of jobs we still
+    // consider its own; surface them so it can cancel them upstream.
+    for (const job of jobs.listByPod(podId)) {
+      if (!stillOwned.has(job.id) && job.cancel_requested) cancel.push(job.id);
+    }
+
+    const slots = freeSlots(pod, stillOwned.size);
+    let assign = claimForPod(jobs, pod, slots, config.leaseTtlMs, now);
+
+    // Nothing to do — park until work shows up or the poll window closes.
+    if (assign.length === 0 && slots > 0 && !pod.draining) {
+      const requested =
+        typeof body.wait_s === 'number' ? body.wait_s * 1000 : config.maxPollWaitMs;
+      const waitMs = Math.min(Math.max(requested, 0), config.maxPollWaitMs);
+      const woken = await waiters.wait(waitMs, ctx.shutdownSignal);
+      if (woken) {
+        assign = claimForPod(jobs, pod, slots, config.leaseTtlMs, Date.now());
+      }
+    }
+
+    if (assign.length > 0) {
+      request.log.info(
+        { podId, jobIds: assign.map((a) => a.job_id) },
+        'dispatched jobs to pod',
+      );
+    }
+
+    const response: PollResponse = {
+      session_id: pod.session_id,
+      lease_ttl_s: Math.round(config.leaseTtlMs / 1000),
+      poll_wait_s: Math.round(config.maxPollWaitMs / 1000),
+      assign,
+      cancel: [...new Set(cancel)],
+      orphan,
+      drain: pod.draining,
+    };
+    return reply.send(response);
+  });
+
+  /** The source image. Lease-fenced so a stale pod can't read another's input. */
+  app.get<{ Params: { id: string }; Querystring: { lease_id?: string } }>(
+    '/agent/v1/jobs/:id/input',
+    async (request, reply) => {
+      const job = jobs.get(request.params.id);
+      if (!job) return reply.code(404).send({ detail: 'job not found' });
+      if (!job.lease_id || job.lease_id !== request.query.lease_id) {
+        return reply.code(409).send({ detail: 'stale_lease' });
+      }
+      if (!job.input_path) return reply.code(410).send({ detail: 'input expired' });
+
+      const size = await artifacts.exists(job.input_path);
+      if (size === null) return reply.code(410).send({ detail: 'input expired' });
+
+      return reply
+        .header('content-type', 'application/octet-stream')
+        .header('content-length', String(size))
+        .send(createReadStream(job.input_path));
+    },
+  );
+
+  /**
+   * The generated media, as a raw body rather than multipart — there is nothing
+   * for an envelope to carry. Streamed straight to disk so a 50 MB clip never
+   * lands in the heap, and idempotent on retry because the part file is simply
+   * overwritten.
+   */
+  app.post<{ Params: { id: string }; Querystring: { lease_id?: string; filename?: string } }>(
+    '/agent/v1/jobs/:id/artifact',
+    async (request, reply) => {
+      const job = jobs.get(request.params.id);
+      if (!job) return reply.code(404).send({ detail: 'job not found' });
+      if (!job.lease_id || job.lease_id !== request.query.lease_id) {
+        return reply.code(409).send({ detail: 'stale_lease' });
+      }
+
+      const filename = request.query.filename ?? 'output.mp4';
+      if (!isSafeFilename(filename)) {
+        return reply.code(400).send({ detail: 'invalid filename' });
+      }
+
+      const declared = Number(request.headers['content-length']);
+      if (Number.isFinite(declared) && declared > config.maxArtifactBytes) {
+        return reply.code(413).send({ detail: 'artifact too large' });
+      }
+
+      let stored;
+      try {
+        stored = await artifacts.writeArtifact(
+          job.id,
+          filename,
+          request.body as Readable,
+          config.maxArtifactBytes,
+        );
+      } catch (error) {
+        if (error instanceof ArtifactTooLarge) {
+          return reply.code(413).send({ detail: error.message });
+        }
+        throw error;
+      }
+
+      const expected = request.headers['x-content-sha256'];
+      if (typeof expected === 'string' && expected && expected !== stored.sha256) {
+        await artifacts.removeJob(job.id);
+        return reply.code(400).send({ detail: 'artifact sha256 mismatch' });
+      }
+
+      jobs.addEvent(job.id, 'uploaded', job.pod_id, `${stored.bytes} bytes`);
+      return reply.send({ filename, bytes: stored.bytes, sha256: stored.sha256 });
+    },
+  );
+
+  /**
+   * Terminal outcome. The agent only calls this after the artifact upload
+   * returned 2xx, so a completed job always has its media on disk.
+   */
+  app.post<{
+    Params: { id: string };
+    Querystring: { lease_id?: string };
+    Body: {
+      state?: unknown;
+      error?: unknown;
+      retryable?: unknown;
+      filename?: unknown;
+      bytes?: unknown;
+      sha256?: unknown;
+      upstream_id?: unknown;
+    };
+  }>('/agent/v1/jobs/:id/result', async (request, reply) => {
+    const job = jobs.get(request.params.id);
+    if (!job) return reply.code(404).send({ detail: 'job not found' });
+
+    const leaseId = request.query.lease_id ?? '';
+    if (!job.lease_id || job.lease_id !== leaseId) {
+      // The defining guarantee: a pod whose lease was revoked cannot overwrite
+      // whatever the pod that actually finished the job wrote.
+      return reply.code(409).send({ detail: 'stale_lease' });
+    }
+
+    const body = request.body ?? {};
+    const now = Date.now();
+
+    if (body.state === 'completed') {
+      // SECURITY: this filename becomes a URL the product backend fetches with
+      // its own API key and Cloudflare Access token. Left unvalidated, a pod
+      // could report `../../jobs` — `new URL()` collapses the traversal before
+      // the client's host check, so the pin still passes and the backend is
+      // steered into reading arbitrary gateway paths on the pod's behalf.
+      const filename = body.filename === undefined ? 'output.mp4' : body.filename;
+      if (!isSafeFilename(filename)) {
+        return reply.code(400).send({ detail: 'invalid filename' });
+      }
+      const artifact: Artifact = {
+        url: artifactUrl(job.id, filename),
+        media_type: 'video/mp4',
+        filename,
+        ...(typeof body.bytes === 'number' ? { bytes: body.bytes } : {}),
+        ...(str(body.sha256) ? { sha256: str(body.sha256)! } : {}),
+      };
+      if (!jobs.complete(job.id, leaseId, [artifact], now)) {
+        return reply.code(409).send({ detail: 'stale_lease' });
+      }
+      pods.recordOutcome(job.pod_id, 'completed');
+      await artifacts.removeInput(job.id);
+      jobs.clearInput(job.id);
+      request.log.info(
+        { jobId: job.id, podId: job.pod_id, ms: now - (job.started_at ?? now) },
+        'job completed',
+      );
+      waiters.kick();
+      return reply.send({ id: job.id, state: 'completed' });
+    }
+
+    if (body.state === 'cancelled') {
+      jobs.markCancelled(job.id, leaseId, now, 'acknowledged by pod');
+      await artifacts.removeInput(job.id);
+      waiters.kick();
+      return reply.send({ id: job.id, state: 'cancelled' });
+    }
+
+    const message = str(body.error) ?? 'pod reported an unspecified failure';
+    // A 5xx or a dropped connection is worth trying on another pod; a 4xx from
+    // SGLang means the parameters are wrong and retrying only burns the
+    // client's deadline.
+    const retryable = body.retryable === true;
+    if (retryable && job.attempts < config.maxAttempts) {
+      jobs.requeue(job.id, leaseId, message.slice(0, 200));
+      pods.recordOutcome(job.pod_id, 'failed');
+      request.log.warn({ jobId: job.id, podId: job.pod_id, message }, 'job requeued after pod failure');
+      waiters.kick();
+      return reply.send({ id: job.id, state: 'queued' });
+    }
+
+    if (!jobs.fail(job.id, leaseId, message, now)) {
+      return reply.code(409).send({ detail: 'stale_lease' });
+    }
+    pods.recordOutcome(job.pod_id, 'failed');
+    await artifacts.removeInput(job.id);
+    jobs.clearInput(job.id);
+    request.log.warn({ jobId: job.id, podId: job.pod_id, message }, 'job failed');
+    waiters.kick();
+    return reply.send({ id: job.id, state: 'failed' });
+  });
+}

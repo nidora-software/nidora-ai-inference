@@ -4,6 +4,14 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    # The CUDA image takes ~30 minutes to build; don't trigger it for changes
+    # that cannot affect it (gateway, docs, deploy config).
+    paths:
+      - Dockerfile
+      - scripts/**
+      - agent/**
+      - .dockerignore
+      - .github/workflows/docker.yml
   workflow_dispatch:
 
 permissions:

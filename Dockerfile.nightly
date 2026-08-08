@@ -14,6 +14,10 @@ ADD https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflar
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/cloudflared /usr/local/bin/docker-entrypoint.sh
 
+# The pull agent for gateway mode (GATEWAY_URL) — see the stable Dockerfile.
+COPY agent /opt/nidora-agent
+RUN pip install --no-cache-dir /opt/nidora-agent
+
 ENV HF_HOME=/workspace/hf \
     SGLANG_DIFFUSION_CACHE_ROOT=/workspace/sgl_diffusion
 

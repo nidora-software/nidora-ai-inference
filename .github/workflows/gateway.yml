@@ -1,0 +1,113 @@
+name: Gateway — test and push image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - gateway/**
+      - agent/**
+      - scripts/**
+      - test/**
+      - .github/workflows/gateway.yml
+  pull_request:
+    paths:
+      - gateway/**
+      - agent/**
+      - scripts/**
+      - test/**
+      - tools/**
+      - .github/workflows/gateway.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test-gateway:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: gateway/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      # Includes contract.test.ts, which runs a strict client parser
+      # against real responses — the guard against silently breaking
+      # integrations that depend on the documented job contract.
+      - run: npm test
+
+  test-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e "agent[dev]"
+      - run: python -m pytest -q
+        working-directory: agent
+
+  test-entrypoint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck scripts/docker-entrypoint.sh test/e2e/run.sh test/entrypoint/run.sh
+      # Supervision decides whether a pod that lost its agent stays up looking
+      # healthy. Stubbed children let that be checked without a GPU.
+      - run: ./test/entrypoint/run.sh
+
+  build:
+    needs: [test-gateway, test-agent]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/${{ github.repository }}/gateway
+            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/nidora-inference-gateway
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=
+            type=semver,pattern={{version}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./gateway
+          platforms: linux/amd64
+          push: true
+          # Matching the GPU image workflow: attestations add an unknown/unknown
+          # platform entry some runtimes handle poorly.
+          provenance: false
+          sbom: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

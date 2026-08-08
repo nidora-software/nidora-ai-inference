@@ -11,6 +11,12 @@ ADD https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflar
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/cloudflared /usr/local/bin/docker-entrypoint.sh
 
+# The pull agent for gateway mode (GATEWAY_URL). Installed last so editing it
+# never busts the expensive sglang[diffusion] layer above. Its only dependency
+# is httpx, which the base image already ships.
+COPY agent /opt/nidora-agent
+RUN pip install --no-cache-dir /opt/nidora-agent
+
 # No HF_HUB_ENABLE_HF_TRANSFER: sglang doesn't ship hf_transfer, and setting
 # it without the package makes huggingface_hub error out. Fast downloads come
 # from hf-xet (huggingface_hub's default backend) instead.

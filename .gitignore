@@ -12,7 +12,20 @@ Thumbs.db
 .idea/
 .vscode/
 
+# Gateway (Node)
+node_modules/
+gateway/dist/
+
+# Agent (Python)
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.venv/
+
 # Legacy local artifacts
 /outputs/
 uv.lock
 *.sqlite3
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
