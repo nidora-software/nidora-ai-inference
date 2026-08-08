@@ -1,11 +1,20 @@
-# The build only COPYs scripts/ — everything else is context weight.
+# The GPU build COPYs scripts/ and agent/ — everything else is context weight.
 .git
 .gitignore
 .github
 docs
+deploy
+gateway
+tools
 workspace
 .env
 .env.*
 .DS_Store
 README.md
 LICENSE
+
+# Agent build leftovers
+agent/tests
+**/__pycache__
+**/*.egg-info
+**/.pytest_cache

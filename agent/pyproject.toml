@@ -1,0 +1,35 @@
+[project]
+name = "nidora-agent"
+version = "0.1.0"
+description = "Pod-side agent: pulls jobs from the Nidora inference gateway and runs them on the local SGLang server"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+# httpx only — it is already present in the sglang image, so installing the
+# agent adds seconds to the build, not a layer of new dependencies.
+dependencies = ["httpx>=0.27"]
+
+[project.optional-dependencies]
+# The test fakes stand in for SGLang and the gateway over real sockets;
+# python-multipart is what lets the SGLang fake accept the multipart form the
+# agent actually submits.
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.24",
+  "fastapi>=0.115",
+  "uvicorn>=0.30",
+  "python-multipart>=0.0.9",
+]
+
+[project.scripts]
+nidora-agent = "nidora_agent.__main__:run"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
