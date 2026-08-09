@@ -158,6 +158,10 @@ describe('scheduling', () => {
     // to die as a bare 415 before the handler ever ran.
     const shapes: Array<[string, Record<string, string>, string | undefined]> = [
       ['POST', {}, undefined],
+      // Setting the JSON header and sending nothing is the natural thing to
+      // type when the docs say no body is needed. Fastify 400s it by default.
+      ['POST', { 'content-type': 'application/json' }, undefined],
+      ['POST', { 'content-type': 'application/json' }, ''],
       ['POST', { 'content-type': 'application/json' }, JSON.stringify({ draining: true })],
       ['POST', { 'content-type': 'application/x-www-form-urlencoded' }, 'draining=true'],
     ];
@@ -205,6 +209,20 @@ describe('scheduling', () => {
       headers: authHeaders,
     });
     assert.equal(missing.statusCode, 404);
+  });
+
+  it('blames the caller for a malformed body rather than itself', async () => {
+    await registerPod(h, { pod_id: 'pod-badbody' });
+    const res = await h.app.inject({
+      method: 'POST',
+      url: '/v1/pods/pod-badbody/drain',
+      headers: { ...authHeaders, 'content-type': 'application/json' },
+      payload: '{oops',
+    });
+    // Tolerating an empty body must not turn a genuine syntax error into a 500,
+    // which would log an alert and tell the caller nothing.
+    assert.equal(res.statusCode, 400);
+    assert.equal(h.ctx.pods.get('pod-badbody')!.draining, false);
   });
 
   it('keeps a job queued while its pod is still warming, and reports the wait', async () => {

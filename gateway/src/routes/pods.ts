@@ -20,11 +20,23 @@ export default async function podRoutes(
   app.addHook('preHandler', ctx.requireAdminKey);
 
   /**
-   * These routes are typed by hand into a terminal, and `curl -d '…'` sends
-   * `application/x-www-form-urlencoded` unless you remember to override it.
-   * Fastify parses no such body by default, so the request died with a bare
-   * 415 before reaching the handler — a hostile answer to "please drain this
-   * pod". Parsing it properly is three lines and means both spellings work.
+   * These routes are typed by hand into a terminal, so the body arrives in
+   * whatever shape curl felt like sending. Both parsers below are scoped to
+   * this plugin: the client and agent planes keep strict parsing, where a
+   * malformed body really is a caller's bug worth reporting.
+   */
+
+  /** A parse failure is the caller's, not ours — say 400, not 500. */
+  const badBody = (error: unknown): Error => {
+    const err = error as Error & { statusCode?: number };
+    err.statusCode = 400;
+    return err;
+  };
+
+  /**
+   * `curl -d '…'` sends `application/x-www-form-urlencoded` unless you
+   * remember to override it, and Fastify parses no such body by default — so
+   * the request died with a bare 415 before reaching the handler.
    */
   app.addContentTypeParser(
     'application/x-www-form-urlencoded',
@@ -33,7 +45,28 @@ export default async function podRoutes(
       try {
         done(null, Object.fromEntries(new URLSearchParams(body as string)));
       } catch (error) {
-        done(error as Error, undefined);
+        done(badBody(error), undefined);
+      }
+    },
+  );
+
+  /**
+   * An empty body with a JSON content-type is Fastify's other 400. It is the
+   * natural thing to type — these routes need no body, so a caller sets the
+   * header out of habit and sends nothing — and refusing it while documenting
+   * "no body needed" is a contradiction. Absent is read as `{}`; genuinely
+   * malformed JSON is still a 400.
+   */
+  app.addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    (_request, body, done) => {
+      const text = (body as string).trim();
+      if (text === '') return done(null, {});
+      try {
+        done(null, JSON.parse(text));
+      } catch (error) {
+        done(badBody(error), undefined);
       }
     },
   );
