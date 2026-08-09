@@ -159,7 +159,8 @@ capacity frees up when generation finishes on its own.
 | `GET /health` | Queue depth and fleet capacity (no gateway auth) |
 | `GET /metrics` | Prometheus exposition |
 | `GET /v1/pods` | Per-pod state (admin key) |
-| `POST /v1/pods/:id/drain` | Stop assigning new work to a pod (admin key) |
+| `POST /v1/pods/:id/drain` | Stop assigning new work to a pod (admin key). No body needed. |
+| `DELETE /v1/pods/:id/drain` | Resume dispatch to a drained pod (admin key) |
 
 `GET /v1/models` answers what the fleet can run at this moment, exactly as
 SGLang's `/models` answers it for one server: a model appears only while a pod

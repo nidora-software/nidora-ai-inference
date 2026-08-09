@@ -151,6 +151,62 @@ describe('scheduling', () => {
     assert.equal(h.ctx.jobs.get(first)!.state, 'in_progress', 'draining must not abandon live work');
   });
 
+  it('drains however an operator spells the request', async () => {
+    await registerPod(h, { pod_id: 'pod-drain' });
+
+    // `curl -d '…'` sends form-urlencoded unless you override it, which used
+    // to die as a bare 415 before the handler ever ran.
+    const shapes: Array<[string, Record<string, string>, string | undefined]> = [
+      ['POST', {}, undefined],
+      ['POST', { 'content-type': 'application/json' }, JSON.stringify({ draining: true })],
+      ['POST', { 'content-type': 'application/x-www-form-urlencoded' }, 'draining=true'],
+    ];
+    for (const [method, headers, payload] of shapes) {
+      const res = await h.app.inject({
+        method: method as 'POST',
+        url: '/v1/pods/pod-drain/drain',
+        headers: { ...authHeaders, ...headers },
+        ...(payload === undefined ? {} : { payload }),
+      });
+      assert.equal(res.statusCode, 200, `${JSON.stringify(headers)} must be accepted`);
+      assert.equal(res.json().draining, true);
+      assert.equal(h.ctx.pods.get('pod-drain')!.draining, true);
+      h.ctx.pods.setDraining('pod-drain', false);
+    }
+
+    // Resuming: a JSON false, a form false, or a bodyless DELETE.
+    for (const [headers, payload] of [
+      [{ 'content-type': 'application/json' }, JSON.stringify({ draining: false })],
+      [{ 'content-type': 'application/x-www-form-urlencoded' }, 'draining=false'],
+    ] as const) {
+      h.ctx.pods.setDraining('pod-drain', true);
+      const res = await h.app.inject({
+        method: 'POST',
+        url: '/v1/pods/pod-drain/drain',
+        headers: { ...authHeaders, ...headers },
+        payload,
+      });
+      assert.equal(res.statusCode, 200);
+      assert.equal(h.ctx.pods.get('pod-drain')!.draining, false, `${payload} must resume`);
+    }
+
+    h.ctx.pods.setDraining('pod-drain', true);
+    const resumed = await h.app.inject({
+      method: 'DELETE',
+      url: '/v1/pods/pod-drain/drain',
+      headers: authHeaders,
+    });
+    assert.equal(resumed.statusCode, 200);
+    assert.equal(h.ctx.pods.get('pod-drain')!.draining, false);
+
+    const missing = await h.app.inject({
+      method: 'DELETE',
+      url: '/v1/pods/nope/drain',
+      headers: authHeaders,
+    });
+    assert.equal(missing.statusCode, 404);
+  });
+
   it('keeps a job queued while its pod is still warming, and reports the wait', async () => {
     const id = await create();
     const job = await h.app.inject({ method: 'GET', url: `/v1/videos/${id}`, headers: authHeaders });

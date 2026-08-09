@@ -2,7 +2,12 @@
  * Operator view of the fleet. Separate from the client job API because it
  * authenticates with the admin key, not a client API key.
  */
-import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
+import type {
+  FastifyInstance,
+  FastifyPluginOptions,
+  FastifyReply,
+  FastifyRequest,
+} from 'fastify';
 import type { AppContext } from '../context.js';
 
 export default async function podRoutes(
@@ -13,6 +18,25 @@ export default async function podRoutes(
   const { config, jobs, pods } = ctx;
 
   app.addHook('preHandler', ctx.requireAdminKey);
+
+  /**
+   * These routes are typed by hand into a terminal, and `curl -d '…'` sends
+   * `application/x-www-form-urlencoded` unless you remember to override it.
+   * Fastify parses no such body by default, so the request died with a bare
+   * 415 before reaching the handler — a hostile answer to "please drain this
+   * pod". Parsing it properly is three lines and means both spellings work.
+   */
+  app.addContentTypeParser(
+    'application/x-www-form-urlencoded',
+    { parseAs: 'string' },
+    (_request, body, done) => {
+      try {
+        done(null, Object.fromEntries(new URLSearchParams(body as string)));
+      } catch (error) {
+        done(error as Error, undefined);
+      }
+    },
+  );
 
   app.get('/v1/pods', async (_request, reply) => {
     const now = Date.now();
@@ -27,18 +51,43 @@ export default async function podRoutes(
   });
 
   /**
+   * A form body carries strings, so `draining=false` arrives as `"false"` —
+   * which is truthy, and would have quietly drained a pod an operator was
+   * trying to bring back. Absent means drain, since a bare POST to /drain has
+   * only one sensible meaning.
+   */
+  function wantsDraining(value: unknown): boolean {
+    if (value === undefined || value === null) return true;
+    if (typeof value === 'boolean') return value;
+    const text = String(value).trim().toLowerCase();
+    return !(text === 'false' || text === '0' || text === 'no' || text === '');
+  }
+
+  function setDrain(id: string, draining: boolean, reply: FastifyReply, log: FastifyRequest['log']) {
+    if (!pods.setDraining(id, draining)) {
+      return reply.code(404).send({ detail: 'pod not found' });
+    }
+    log.info({ podId: id, draining }, 'pod drain flag changed');
+    return reply.send({ pod_id: id, draining });
+  }
+
+  /**
    * Stop giving a pod new work without killing what it is already running —
    * the polite way to retire a rented pod before destroying it.
+   *
+   * The body is optional: a bare POST drains. `{"draining": false}` resumes,
+   * and so does DELETE below, which is the spelling that needs no body and so
+   * no content-type to get wrong.
    */
-  app.post<{ Params: { id: string }; Body: { draining?: boolean } }>(
+  app.post<{ Params: { id: string }; Body: { draining?: unknown } }>(
     '/v1/pods/:id/drain',
-    async (request, reply) => {
-      const draining = request.body?.draining ?? true;
-      if (!pods.setDraining(request.params.id, draining)) {
-        return reply.code(404).send({ detail: 'pod not found' });
-      }
-      request.log.info({ podId: request.params.id, draining }, 'pod drain flag changed');
-      return reply.send({ pod_id: request.params.id, draining });
-    },
+    async (request, reply) =>
+      setDrain(request.params.id, wantsDraining(request.body?.draining), reply, request.log),
+  );
+
+  /** Resume dispatch to a drained pod. */
+  app.delete<{ Params: { id: string } }>(
+    '/v1/pods/:id/drain',
+    async (request, reply) => setDrain(request.params.id, false, reply, request.log),
   );
 }
