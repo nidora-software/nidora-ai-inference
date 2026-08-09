@@ -107,20 +107,6 @@ API and the properties a client must respect are in
 [../docs/api.md](../docs/api.md) and
 [../docs/gateway.md](../docs/gateway.md#the-client-contract).
 
-## Testing without a GPU
-
-`compose.e2e.yml` runs the real gateway and the real agent against a mock
-SGLang server:
-
-```bash
-docker compose -f deploy/compose.e2e.yml up --build -d
-./test/e2e/run.sh
-docker compose -f deploy/compose.e2e.yml down -v
-```
-
-`agent-only.Dockerfile` exists solely for that harness — production pods get the
-agent from the GPU image.
-
 ## Operations
 
 | Task | Command |

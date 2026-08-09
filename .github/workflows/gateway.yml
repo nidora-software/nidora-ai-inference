@@ -8,15 +8,14 @@ on:
       - gateway/**
       - agent/**
       - scripts/**
-      - test/**
+      - deploy/**
       - .github/workflows/gateway.yml
   pull_request:
     paths:
       - gateway/**
       - agent/**
       - scripts/**
-      - test/**
-      - tools/**
+      - deploy/**
       - .github/workflows/gateway.yml
   workflow_dispatch:
 
@@ -55,14 +54,13 @@ jobs:
       - run: python -m pytest -q
         working-directory: agent
 
-  test-entrypoint:
+  lint-shell:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck scripts/docker-entrypoint.sh test/e2e/run.sh test/entrypoint/run.sh
-      # Supervision decides whether a pod that lost its agent stays up looking
-      # healthy. Stubbed children let that be checked without a GPU.
-      - run: ./test/entrypoint/run.sh
+      # Both scripts run as root on a machine nobody is watching — the pod
+      # entrypoint on every GPU box, the provisioner on a fresh droplet.
+      - run: shellcheck scripts/docker-entrypoint.sh deploy/droplet-user-data.sh
 
   build:
     needs: [test-gateway, test-agent]

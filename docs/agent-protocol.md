@@ -198,7 +198,8 @@ renewing the lease, which any poll does anyway.
   (poll loop) and [`runner.py`](../agent/src/nidora_agent/runner.py) (one job).
 - Gateway: [`gateway/src/routes/agent.ts`](../gateway/src/routes/agent.ts).
 
-Both sides are covered without a GPU by
-[`deploy/compose.e2e.yml`](../deploy/compose.e2e.yml) and the agent's pytest
-suite, which drives the real agent against fake gateway and SGLang servers over
-real sockets.
+The agent side is covered without a GPU by its pytest suite, which drives the
+real agent against fake gateway and SGLang servers over real sockets. The
+gateway side is covered by its own tests. Nothing exercises the two together —
+this document is the contract that keeps them honest, so change it on both
+sides at once.

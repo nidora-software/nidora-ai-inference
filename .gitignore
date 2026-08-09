@@ -19,6 +19,10 @@ gateway/dist/
 # Agent (Python)
 __pycache__/
 *.egg-info/
+# setuptools' staging copy of src/, written by `pip install -e agent[dev]`.
+# Scoped rather than a bare `build/` so a future source directory of that name
+# is not silently ignored.
+agent/build/
 .pytest_cache/
 .venv/
 

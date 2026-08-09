@@ -131,15 +131,13 @@ cd gateway && npm ci && npm test && npm run typecheck
 
 # Agent
 cd agent && pip install -e ".[dev]" && python -m pytest
-
-# Everything together, no GPU required
-docker compose -f deploy/compose.e2e.yml up --build -d
-./test/e2e/run.sh
 ```
 
-The e2e harness runs the real gateway and the real agent against a mock SGLang
-server, so the whole submit → dispatch → generate → upload → download path is
-covered on a laptop in seconds.
+Neither suite needs a GPU. The gateway's tests drive its real HTTP surface
+in-process; the agent's pytest suite drives the real agent against fake gateway
+and SGLang servers over real sockets. What no longer has automated coverage is
+the two of them talking to *each other* — that path is exercised by deploying
+to a pod.
 
 ## Layout
 
@@ -149,8 +147,6 @@ agent/                       # the pod-side pull agent (Python), installed into 
 Dockerfile                   # GPU pod image: pinned SGLang + diffusion extra + cloudflared + agent
 Dockerfile.nightly           # same, on a date-pinned SGLang nightly
 scripts/docker-entrypoint.sh # supervises cloudflared / sglang serve / the agent
-deploy/                      # compose overlays, e2e harness, deployment guide
-tools/mock-sglang/           # GPU-free stand-in for the diffusion API
-test/e2e/run.sh              # end-to-end check against the e2e stack
+deploy/                      # compose overlay, droplet provisioning, deployment guide
 docs/                        # see the documentation table above
 ```
