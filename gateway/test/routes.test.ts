@@ -49,7 +49,7 @@ describe('auth', () => {
   it('rejects the agent plane without the shared secret', async () => {
     const res = await h.app.inject({
       method: 'POST',
-      url: '/agent/v1/poll',
+      url: '/v1/agent/poll',
       payload: pollBody(),
     });
     assert.equal(res.statusCode, 401);
@@ -58,7 +58,7 @@ describe('auth', () => {
   it('does not accept a client API key on the agent plane, or vice versa', async () => {
     const asClient = await h.app.inject({
       method: 'POST',
-      url: '/agent/v1/poll',
+      url: '/v1/agent/poll',
       headers: authHeaders,
       payload: pollBody(),
     });
@@ -307,7 +307,7 @@ describe('content serving', () => {
     const leaseId = poll.assign[0].lease_id;
     const upload = await harness.app.inject({
       method: 'POST',
-      url: `/agent/v1/jobs/${id}/artifact?lease_id=${leaseId}`,
+      url: `/v1/agent/jobs/${id}/artifact?lease_id=${leaseId}`,
       headers: { ...agentHeaders, 'content-type': 'video/mp4' },
       payload: bytes,
     });
@@ -318,7 +318,7 @@ describe('content serving', () => {
     const { id, leaseId } = await completed(h);
     await h.app.inject({
       method: 'POST',
-      url: `/agent/v1/jobs/${id}/result?lease_id=${leaseId}`,
+      url: `/v1/agent/jobs/${id}/result?lease_id=${leaseId}`,
       headers: agentHeaders,
       payload: { state: 'completed' },
     });
@@ -354,7 +354,7 @@ describe('content serving', () => {
     const { id, leaseId } = await completed(h);
     await h.app.inject({
       method: 'POST',
-      url: `/agent/v1/jobs/${id}/result?lease_id=${leaseId}`,
+      url: `/v1/agent/jobs/${id}/result?lease_id=${leaseId}`,
       headers: agentHeaders,
       payload: { state: 'completed' },
     });
@@ -387,7 +387,7 @@ describe('content serving', () => {
 
     const res = await h.app.inject({
       method: 'POST',
-      url: `/agent/v1/jobs/${id}/artifact?lease_id=${leaseId}`,
+      url: `/v1/agent/jobs/${id}/artifact?lease_id=${leaseId}`,
       headers: {
         ...agentHeaders,
         'content-type': 'video/mp4',

@@ -1,7 +1,7 @@
 # nidora-ai-inference
 
 Self-hosted media generation on rented GPU pods, served by
-[SGLang Diffusion](https://docs.sglang.io/diffusion/) behind a queue-tracking
+[SGLang Diffusion](https://docs.sglang.io/diffusion/index.html) behind a queue-tracking
 gateway.
 
 Two pieces:

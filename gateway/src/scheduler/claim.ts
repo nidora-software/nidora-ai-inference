@@ -56,7 +56,7 @@ export function assignmentFor(job: Job, leaseId: string): Assignment {
     model: job.model,
     deadline_at: job.deadline_at,
     input: {
-      url: `/agent/v1/jobs/${job.id}/input`,
+      url: `/v1/agent/jobs/${job.id}/input`,
       sha256: job.input_sha256,
       bytes: job.input_bytes,
     },

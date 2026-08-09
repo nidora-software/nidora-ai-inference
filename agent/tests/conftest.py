@@ -145,7 +145,7 @@ def fake_gateway() -> FakeGateway:
     app = FastAPI()
     state = FakeGateway(app=app)
 
-    @app.post("/agent/v1/poll")
+    @app.post("/v1/agent/poll")
     async def poll(request: Request) -> JSONResponse:
         body = await request.json()
         state.polls.append(body)
@@ -160,13 +160,13 @@ def fake_gateway() -> FakeGateway:
         payload.setdefault("drain", False)
         return JSONResponse(payload)
 
-    @app.get("/agent/v1/jobs/{job_id}/input")
+    @app.get("/v1/agent/jobs/{job_id}/input")
     async def get_input(job_id: str, lease_id: str = "") -> Response:
         if state.input_status != 200:
             return Response(status_code=state.input_status)
         return Response(content=state.image, media_type="application/octet-stream")
 
-    @app.post("/agent/v1/jobs/{job_id}/artifact")
+    @app.post("/v1/agent/jobs/{job_id}/artifact")
     async def artifact(job_id: str, request: Request, lease_id: str = "", filename: str = "") -> Response:
         body = await request.body()
         state.uploads.append(
@@ -186,7 +186,7 @@ def fake_gateway() -> FakeGateway:
             return JSONResponse({"detail": "nope"}, status_code=state.upload_status)
         return JSONResponse({"ok": True})
 
-    @app.post("/agent/v1/jobs/{job_id}/result")
+    @app.post("/v1/agent/jobs/{job_id}/result")
     async def result(job_id: str, request: Request, lease_id: str = "") -> Response:
         body = await request.json()
         state.results.append({"job_id": job_id, "lease_id": lease_id, **body})
@@ -226,7 +226,7 @@ def assignment(job_id: str = "j_1", lease_id: str = "lease-1", **fields) -> dict
         "lease_id": lease_id,
         "model": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
         "deadline_at": 0,
-        "input": {"url": f"/agent/v1/jobs/{job_id}/input", "sha256": None, "bytes": None},
+        "input": {"url": f"/v1/agent/jobs/{job_id}/input", "sha256": None, "bytes": None},
         "sglang": {
             "endpoint": "/v1/videos",
             "fields": {

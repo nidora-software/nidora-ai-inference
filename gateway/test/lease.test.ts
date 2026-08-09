@@ -37,7 +37,7 @@ describe('lease fencing', () => {
     const id = created.json().id as string;
     const poll = await h.app.inject({
       method: 'POST',
-      url: '/agent/v1/poll',
+      url: '/v1/agent/poll',
       headers: agentHeaders,
       payload: pollBody({ pod_id: podId }),
     });
@@ -51,7 +51,7 @@ describe('lease fencing', () => {
 
     const result = await h.app.inject({
       method: 'POST',
-      url: `/agent/v1/jobs/${id}/result?lease_id=not-the-real-lease`,
+      url: `/v1/agent/jobs/${id}/result?lease_id=not-the-real-lease`,
       headers: agentHeaders,
       payload: { state: 'completed' },
     });
@@ -85,7 +85,7 @@ describe('lease fencing', () => {
     // A second pod picks it up and finishes.
     const poll = await h.app.inject({
       method: 'POST',
-      url: '/agent/v1/poll',
+      url: '/v1/agent/poll',
       headers: agentHeaders,
       payload: pollBody({ pod_id: 'pod-fast' }),
     });
@@ -94,13 +94,13 @@ describe('lease fencing', () => {
 
     await h.app.inject({
       method: 'POST',
-      url: `/agent/v1/jobs/${id}/artifact?lease_id=${secondLease}`,
+      url: `/v1/agent/jobs/${id}/artifact?lease_id=${secondLease}`,
       headers: { ...agentHeaders, 'content-type': 'video/mp4' },
       payload: Buffer.from('the real clip'),
     });
     await h.app.inject({
       method: 'POST',
-      url: `/agent/v1/jobs/${id}/result?lease_id=${secondLease}`,
+      url: `/v1/agent/jobs/${id}/result?lease_id=${secondLease}`,
       headers: agentHeaders,
       payload: { state: 'completed', bytes: 13 },
     });
@@ -108,7 +108,7 @@ describe('lease fencing', () => {
     // Now the slow pod finally wakes up and tries to report its own result.
     const zombie = await h.app.inject({
       method: 'POST',
-      url: `/agent/v1/jobs/${id}/result?lease_id=${firstLease}`,
+      url: `/v1/agent/jobs/${id}/result?lease_id=${firstLease}`,
       headers: agentHeaders,
       payload: { state: 'failed', error: 'stale result from a partitioned pod' },
     });
@@ -130,7 +130,7 @@ describe('lease fencing', () => {
     const { id } = await createAndClaim();
     const upload = await h.app.inject({
       method: 'POST',
-      url: `/agent/v1/jobs/${id}/artifact?lease_id=wrong`,
+      url: `/v1/agent/jobs/${id}/artifact?lease_id=wrong`,
       headers: { ...agentHeaders, 'content-type': 'video/mp4' },
       payload: Buffer.from('should never land'),
     });
@@ -151,7 +151,7 @@ describe('lease fencing', () => {
 
     const ok = await h.app.inject({
       method: 'GET',
-      url: `/agent/v1/jobs/${id}/input?lease_id=${leaseId}`,
+      url: `/v1/agent/jobs/${id}/input?lease_id=${leaseId}`,
       headers: agentHeaders,
     });
     assert.equal(ok.statusCode, 200);
@@ -159,7 +159,7 @@ describe('lease fencing', () => {
 
     const denied = await h.app.inject({
       method: 'GET',
-      url: `/agent/v1/jobs/${id}/input?lease_id=someone-elses-lease`,
+      url: `/v1/agent/jobs/${id}/input?lease_id=someone-elses-lease`,
       headers: agentHeaders,
     });
     assert.equal(denied.statusCode, 409);
@@ -171,7 +171,7 @@ describe('lease fencing', () => {
 
     const poll = await h.app.inject({
       method: 'POST',
-      url: '/agent/v1/poll',
+      url: '/v1/agent/poll',
       headers: agentHeaders,
       payload: pollBody({
         pod_id: 'pod-partitioned',

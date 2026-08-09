@@ -170,7 +170,7 @@ describe('client contract', () => {
     const media = Buffer.from('fake mp4 bytes');
     const upload = await h.app.inject({
       method: 'POST',
-      url: `/agent/v1/jobs/${id}/artifact?lease_id=${assignment.lease_id}`,
+      url: `/v1/agent/jobs/${id}/artifact?lease_id=${assignment.lease_id}`,
       headers: { ...agentHeaders, 'content-type': 'video/mp4' },
       payload: media,
     });
@@ -178,7 +178,7 @@ describe('client contract', () => {
 
     await h.app.inject({
       method: 'POST',
-      url: `/agent/v1/jobs/${id}/result?lease_id=${assignment.lease_id}`,
+      url: `/v1/agent/jobs/${id}/result?lease_id=${assignment.lease_id}`,
       headers: agentHeaders,
       payload: { state: 'completed', filename: 'output.mp4', bytes: media.length },
     });
@@ -272,7 +272,7 @@ describe('client contract', () => {
 
     await h.app.inject({
       method: 'POST',
-      url: `/agent/v1/jobs/${id}/result?lease_id=${lease_id}`,
+      url: `/v1/agent/jobs/${id}/result?lease_id=${lease_id}`,
       headers: agentHeaders,
       payload: { state: 'failed', error: 'sglang rejected the request (422)', retryable: false },
     });

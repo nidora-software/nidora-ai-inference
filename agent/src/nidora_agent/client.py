@@ -102,7 +102,7 @@ class Agent:
         }
 
         response = await client.post(
-            f"{self.config.gateway_url}/agent/v1/poll",
+            f"{self.config.gateway_url}/v1/agent/poll",
             json=body,
             headers=self.config.headers,
             # Comfortably longer than the server's poll window, which is itself
@@ -158,7 +158,7 @@ class Agent:
     async def _report(self, client: httpx.AsyncClient, state: JobState, result: dict) -> None:
         """Deliver the terminal outcome, retrying while the lease is still ours."""
         job = state.assignment
-        url = f"{self.config.gateway_url}/agent/v1/jobs/{job.job_id}/result"
+        url = f"{self.config.gateway_url}/v1/agent/jobs/{job.job_id}/result"
         for attempt in range(1, 4):
             try:
                 response = await client.post(

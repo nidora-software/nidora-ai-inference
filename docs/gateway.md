@@ -22,7 +22,7 @@ nature — the address of the service should not be.
  ┌──────────────────┐                        │        │ http           │
  │ public hostname  │   Cloudflare Tunnel    │  nidora_agent           │
  │ (Access, service │◄───────────────────────┴────────┬────────────────┘
- │  token policy)   │                                 │ POST /agent/v1/poll
+ │  token policy)   │                                 │ POST /v1/agent/poll
  │                  │◄────────────────────────────────┘ (long-poll, ≤25s)
  └────────┬─────────┘
           ▼

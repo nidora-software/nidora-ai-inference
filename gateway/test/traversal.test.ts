@@ -1,7 +1,7 @@
 /**
  * Regression tests for the artifact-filename traversal.
  *
- * The bug: `POST /agent/v1/jobs/:id/result` accepted any non-empty string as
+ * The bug: `POST /v1/agent/jobs/:id/result` accepted any non-empty string as
  * `filename` and interpolated it into the artifact URL. The upload route and
  * the on-disk resolver both validated; the result route did not — and its value
  * is the one handed to clients.
@@ -59,7 +59,7 @@ describe('artifact filename traversal', () => {
     const id = created.json().id as string;
     const poll = await h.app.inject({
       method: 'POST',
-      url: '/agent/v1/poll',
+      url: '/v1/agent/poll',
       headers: agentHeaders,
       payload: pollBody({ pod_id: podId }),
     });
@@ -72,7 +72,7 @@ describe('artifact filename traversal', () => {
 
       const result = await h.app.inject({
         method: 'POST',
-        url: `/agent/v1/jobs/${id}/result?lease_id=${leaseId}`,
+        url: `/v1/agent/jobs/${id}/result?lease_id=${leaseId}`,
         headers: agentHeaders,
         payload: { state: 'completed', filename },
       });
@@ -99,7 +99,7 @@ describe('artifact filename traversal', () => {
     for (const [filename] of TRAVERSALS) {
       const upload = await h.app.inject({
         method: 'POST',
-        url: `/agent/v1/jobs/${id}/artifact?lease_id=${leaseId}&filename=${encodeURIComponent(filename)}`,
+        url: `/v1/agent/jobs/${id}/artifact?lease_id=${leaseId}&filename=${encodeURIComponent(filename)}`,
         headers: { ...agentHeaders, 'content-type': 'video/mp4' },
         payload: Buffer.from('x'),
       });
@@ -115,13 +115,13 @@ describe('artifact filename traversal', () => {
     const { id, leaseId } = await claimJob();
     await h.app.inject({
       method: 'POST',
-      url: `/agent/v1/jobs/${id}/artifact?lease_id=${leaseId}`,
+      url: `/v1/agent/jobs/${id}/artifact?lease_id=${leaseId}`,
       headers: { ...agentHeaders, 'content-type': 'video/mp4' },
       payload: Buffer.from('clip'),
     });
     await h.app.inject({
       method: 'POST',
-      url: `/agent/v1/jobs/${id}/result?lease_id=${leaseId}`,
+      url: `/v1/agent/jobs/${id}/result?lease_id=${leaseId}`,
       headers: agentHeaders,
       payload: { state: 'completed' },
     });
@@ -154,13 +154,13 @@ describe('artifact filename traversal', () => {
       const { id, leaseId } = await claimJob();
       await h.app.inject({
         method: 'POST',
-        url: `/agent/v1/jobs/${id}/artifact?lease_id=${leaseId}&filename=${filename}`,
+        url: `/v1/agent/jobs/${id}/artifact?lease_id=${leaseId}&filename=${filename}`,
         headers: { ...agentHeaders, 'content-type': 'video/mp4' },
         payload: Buffer.from('clip'),
       });
       const result = await h.app.inject({
         method: 'POST',
-        url: `/agent/v1/jobs/${id}/result?lease_id=${leaseId}`,
+        url: `/v1/agent/jobs/${id}/result?lease_id=${leaseId}`,
         headers: agentHeaders,
         payload: { state: 'completed', filename },
       });
@@ -179,7 +179,7 @@ describe('artifact filename traversal', () => {
     const { id, leaseId } = await claimJob();
     await h.app.inject({
       method: 'POST',
-      url: `/agent/v1/jobs/${id}/artifact?lease_id=${leaseId}&filename=..`,
+      url: `/v1/agent/jobs/${id}/artifact?lease_id=${leaseId}&filename=..`,
       headers: { ...agentHeaders, 'content-type': 'video/mp4' },
       payload: Buffer.from('should never land'),
     });

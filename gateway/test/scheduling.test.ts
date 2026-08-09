@@ -44,7 +44,7 @@ describe('scheduling', () => {
     (
       await h.app.inject({
         method: 'POST',
-        url: '/agent/v1/poll',
+        url: '/v1/agent/poll',
         headers: agentHeaders,
         payload: pollBody(body),
       })

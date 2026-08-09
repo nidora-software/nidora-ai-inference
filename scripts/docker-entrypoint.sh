@@ -15,7 +15,8 @@
 #                          (attention backend, offload, torch compile, parallelism)
 #   GATEWAY_URL            optional: enables the pull agent (e.g. https://<your-hostname>)
 #   GATEWAY_AGENT_SECRET   required when GATEWAY_URL is set
-#   POD_ID                 optional: stable pod identity (see agent/config.py)
+#   POD_ID                 optional: stable pod identity
+#                          (see agent/src/nidora_agent/config.py)
 #   AGENT_MAX_IN_FLIGHT    default 1
 #   CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET  Access service token for the gateway
 #

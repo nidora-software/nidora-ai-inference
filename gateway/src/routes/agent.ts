@@ -6,10 +6,10 @@
  * pod — so a rented GPU box needs no inbound reachability, no tunnel of its
  * own, and no DNS record.
  *
- *   POST /agent/v1/poll                  register + heartbeat + renew + claim
- *   GET  /agent/v1/jobs/:id/input        the source image bytes
- *   POST /agent/v1/jobs/:id/artifact     the generated mp4 (raw body)
- *   POST /agent/v1/jobs/:id/result       terminal outcome
+ *   POST /v1/agent/poll                  register + heartbeat + renew + claim
+ *   GET  /v1/agent/jobs/:id/input        the source image bytes
+ *   POST /v1/agent/jobs/:id/artifact     the generated mp4 (raw body)
+ *   POST /v1/agent/jobs/:id/result       terminal outcome
  *
  * ## Why long-poll and not a WebSocket
  *
@@ -88,7 +88,7 @@ export default async function agentRoutes(
    * trip. Folding them together means an idle pod costs exactly one in-flight
    * request and a busy pod renews its leases for free.
    */
-  app.post<{ Body: PollBody }>('/agent/v1/poll', async (request, reply) => {
+  app.post<{ Body: PollBody }>('/v1/agent/poll', async (request, reply) => {
     const body = request.body ?? {};
     const podId = str(body.pod_id);
     if (!podId) return reply.code(400).send({ detail: 'pod_id is required' });
@@ -185,7 +185,7 @@ export default async function agentRoutes(
 
   /** The source image. Lease-fenced so a stale pod can't read another's input. */
   app.get<{ Params: { id: string }; Querystring: { lease_id?: string } }>(
-    '/agent/v1/jobs/:id/input',
+    '/v1/agent/jobs/:id/input',
     async (request, reply) => {
       const job = jobs.get(request.params.id);
       if (!job) return reply.code(404).send({ detail: 'job not found' });
@@ -211,7 +211,7 @@ export default async function agentRoutes(
    * overwritten.
    */
   app.post<{ Params: { id: string }; Querystring: { lease_id?: string; filename?: string } }>(
-    '/agent/v1/jobs/:id/artifact',
+    '/v1/agent/jobs/:id/artifact',
     async (request, reply) => {
       const job = jobs.get(request.params.id);
       if (!job) return reply.code(404).send({ detail: 'job not found' });
@@ -271,7 +271,7 @@ export default async function agentRoutes(
       sha256?: unknown;
       upstream_id?: unknown;
     };
-  }>('/agent/v1/jobs/:id/result', async (request, reply) => {
+  }>('/v1/agent/jobs/:id/result', async (request, reply) => {
     const job = jobs.get(request.params.id);
     if (!job) return reply.code(404).send({ detail: 'job not found' });
 

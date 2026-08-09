@@ -1,6 +1,6 @@
 # Pod ↔ gateway protocol
 
-Four HTTP endpoints under `/agent/v1`. Pods dial out to them; nothing ever
+Four HTTP endpoints under `/v1/agent`. Pods dial out to them; nothing ever
 connects to a pod.
 
 Every request carries:
@@ -30,7 +30,7 @@ needs none of that. Dispatch latency is bounded by the poll window, and the
 gateway wakes parked pollers the instant a job arrives, so in practice a job
 reaches an idle pod in milliseconds.
 
-## `POST /agent/v1/poll`
+## `POST /v1/agent/poll`
 
 Registration, heartbeat, lease renewal, progress and dispatch in one round trip.
 An idle pod costs exactly one in-flight request; a busy pod renews its leases
@@ -100,7 +100,7 @@ there is nothing to do, and returns immediately when a job arrives.
   "lease_id": "6f1c…",
   "model": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
   "deadline_at": 1786182051349,
-  "input": { "url": "/agent/v1/jobs/video_ab12cd34ef56/input",
+  "input": { "url": "/v1/agent/jobs/video_ab12cd34ef56/input",
              "sha256": "…", "bytes": 184320 },
   "sglang": {
     "endpoint": "/v1/videos",
@@ -123,13 +123,13 @@ is a gateway redeploy, not a 30-minute CUDA image rebuild. It also means a field
 name that drifts between SGLang versions is fixed by editing
 [`models.ts`](../gateway/src/domain/models.ts), not by rebuilding pods.
 
-## `GET /agent/v1/jobs/:id/input?lease_id=…`
+## `GET /v1/agent/jobs/:id/input?lease_id=…`
 
 The source image bytes. Verify them against the assignment's `sha256`.
 
 `409 stale_lease` — you no longer own this job. `410` — the input has expired.
 
-## `POST /agent/v1/jobs/:id/artifact?lease_id=…&filename=output.mp4`
+## `POST /v1/agent/jobs/:id/artifact?lease_id=…&filename=output.mp4`
 
 The generated media as a **raw body** (`Content-Type: video/mp4`), not
 multipart — there is nothing for an envelope to carry. Send
@@ -141,7 +141,7 @@ The gateway streams it straight to a part file and renames it into place, so a
 
 `409 stale_lease` is returned before a single byte is written.
 
-## `POST /agent/v1/jobs/:id/result?lease_id=…`
+## `POST /v1/agent/jobs/:id/result?lease_id=…`
 
 The terminal outcome. **Only send `completed` after the artifact upload returned
 2xx** — a completed job whose bytes never arrived would 404 on download.

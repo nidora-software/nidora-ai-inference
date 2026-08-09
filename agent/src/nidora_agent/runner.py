@@ -166,7 +166,7 @@ class Runner:
         the gateway overwrites its part file — so a retry after a timeout is
         safe even when the first attempt actually landed.
         """
-        url = f"{self.gateway_url}/agent/v1/jobs/{job.job_id}/artifact"
+        url = f"{self.gateway_url}/v1/agent/jobs/{job.job_id}/artifact"
         headers = {
             **self.headers,
             "Content-Type": "video/mp4",
