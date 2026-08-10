@@ -262,6 +262,51 @@ describe('client contract', () => {
     assert.equal(body.data[0].pods_ready, 1);
   });
 
+  it('returns errors in the envelope an OpenAI client already handles', async () => {
+    // { error: { message, type, code, param } } — one error path for SGLang,
+    // OpenAI and this gateway.
+    const cases = [
+      [401, 'authentication_error', { method: 'GET' as const, url: '/v1/videos' }],
+      [
+        404,
+        'not_found_error',
+        { method: 'GET' as const, url: '/v1/videos/video_ffffffffffff', headers: authHeaders },
+      ],
+      [
+        415,
+        'invalid_request_error',
+        {
+          method: 'POST' as const,
+          url: '/v1/videos',
+          headers: { ...authHeaders, 'content-type': 'application/json' },
+          payload: {},
+        },
+      ],
+    ] as const;
+
+    for (const [status, type, request] of cases) {
+      const res = await h.app.inject(request as never);
+      assert.equal(res.statusCode, status, `${request.url} should be ${status}`);
+      const body = res.json();
+      assert.equal(Object.hasOwn(body, 'detail'), false, 'the old `detail` field must be gone');
+      assert.equal(typeof body.error, 'object');
+      assert.equal(typeof body.error.message, 'string');
+      assert.ok(body.error.message.length > 0);
+      assert.equal(body.error.type, type);
+      // code and param are always present, null when they do not apply.
+      assert.ok(Object.hasOwn(body.error, 'code'));
+      assert.ok(Object.hasOwn(body.error, 'param'));
+    }
+  });
+
+  it('names the offending field in `param` when there is one', async () => {
+    await registerPod(h);
+    const res = await submit(h, { prompt: '  ' });
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.json().error.param, 'prompt');
+    assert.equal(res.json().error.code, 'missing_parameter');
+  });
+
   it('exposes a failure message through the field a client reads', async () => {
     await registerPod(h, { pod_id: 'pod-fail' });
     const created = await submit(h);

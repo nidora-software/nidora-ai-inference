@@ -113,7 +113,6 @@ API and the properties a client must respect are in
 |---|---|
 | Queue and fleet state | `curl -s $GW/health \| jq` |
 | Per-pod detail | `curl -s $GW/v1/pods -H "X-Api-Key: $KEY" \| jq` |
-| Metrics (Prometheus) | `curl -s $GW/metrics` |
 | Retire a pod politely | `curl -X POST $GW/v1/pods/<id>/drain -H "X-Api-Key: $KEY"` |
 | Put it back in service | `curl -X DELETE $GW/v1/pods/<id>/drain -H "X-Api-Key: $KEY"` |
 | Why was a video slow | `curl -s $GW/v1/videos/<id>/events -H "X-Api-Key: $KEY" \| jq` |

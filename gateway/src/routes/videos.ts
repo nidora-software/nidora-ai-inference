@@ -23,6 +23,7 @@ import { readImage, InputError } from '../domain/inputs.js';
 import { clamp, getModel, modelNames, resolveModelId } from '../domain/models.js';
 import { checkSize, fitSize, isResolution, type Resolution } from '../domain/sizing.js';
 import { toVideoResponse } from '../domain/serialize.js';
+import { apiError } from '../domain/errors.js';
 import { isVideoStatus, type JobParams, type VideoStatus } from '../domain/types.js';
 import { newVideoId } from '../lib/ids.js';
 
@@ -87,11 +88,18 @@ export default async function videoRoutes(
   const respond = (job: Parameters<typeof toVideoResponse>[0]) =>
     toVideoResponse(job, jobs.queuePosition(job), config.artifactTtlMs);
 
+  const noSuchVideo = (id: string) =>
+    apiError(404, `no such video ${id}`, { code: 'video_not_found', param: 'id' });
+
   app.post('/v1/videos', async (request, reply) => {
     if (!request.isMultipart()) {
       return reply
         .code(415)
-        .send({ detail: 'POST /v1/videos takes multipart/form-data with an input_reference file' });
+        .send(
+          apiError(415, 'POST /v1/videos takes multipart/form-data with an input_reference file', {
+            code: 'unsupported_media_type',
+          }),
+        );
     }
 
     let upload: Upload;
@@ -103,7 +111,12 @@ export default async function videoRoutes(
       if ((error as { code?: string }).code === 'FST_REQ_FILE_TOO_LARGE') {
         return reply
           .code(413)
-          .send({ detail: `input_reference exceeds the ${config.maxInputBytes} byte limit` });
+          .send(
+            apiError(413, `input_reference exceeds the ${config.maxInputBytes} byte limit`, {
+              code: 'input_too_large',
+              param: 'input_reference',
+            }),
+          );
       }
       throw error;
     }
@@ -112,16 +125,30 @@ export default async function videoRoutes(
     const spec = getModel(fields.model);
     if (!spec) {
       return reply.code(404).send({
-        detail: `unknown model ${JSON.stringify(fields.model ?? null)}`,
+        ...apiError(404, `unknown model ${JSON.stringify(fields.model ?? null)}`, {
+          code: 'model_not_found',
+          param: 'model',
+        }),
         available: modelNames(),
       });
     }
     const model = resolveModelId(fields.model)!;
 
     const prompt = (fields.prompt ?? '').trim();
-    if (!prompt) return reply.code(400).send({ detail: 'prompt is required' });
+    if (!prompt) {
+      return reply
+        .code(400)
+        .send(apiError(400, 'prompt is required', { code: 'missing_parameter', param: 'prompt' }));
+    }
     if (prompt.length > spec.maxPromptChars) {
-      return reply.code(400).send({ detail: `prompt exceeds ${spec.maxPromptChars} characters` });
+      return reply
+        .code(400)
+        .send(
+          apiError(400, `prompt exceeds ${spec.maxPromptChars} characters`, {
+            code: 'prompt_too_long',
+            param: 'prompt',
+          }),
+        );
     }
 
     // No pod in the fleet loaded these weights, so this job could only ever sit
@@ -134,7 +161,13 @@ export default async function videoRoutes(
       return reply
         .code(503)
         .header('retry-after', '30')
-        .send({ detail: `no pod is serving ${model}`, model });
+        .send({
+          ...apiError(503, `no pod is serving ${model}`, {
+            code: 'no_capacity',
+            param: 'model',
+          }),
+          model,
+        });
     }
 
     // Admission control. Queueing past the point where the backlog cannot clear
@@ -146,22 +179,41 @@ export default async function videoRoutes(
       return reply
         .code(503)
         .header('retry-after', '30')
-        .send({ detail: 'inference queue is full', queue_depth: counts.queued + counts.running });
+        .send({
+          ...apiError(503, 'inference queue is full', { code: 'queue_full' }),
+          queue_depth: counts.queued + counts.running,
+        });
     }
 
-    if (!upload.image) return reply.code(400).send({ detail: 'input_reference is required' });
+    if (!upload.image) {
+      return reply.code(400).send(
+        apiError(400, 'input_reference is required', {
+          code: 'missing_parameter',
+          param: 'input_reference',
+        }),
+      );
+    }
 
     let image;
     try {
       image = readImage(upload.image, config.maxInputBytes);
     } catch (error) {
-      if (error instanceof InputError) return reply.code(400).send({ detail: error.message });
+      if (error instanceof InputError) {
+        return reply
+          .code(400)
+          .send(apiError(400, error.message, { code: 'invalid_image', param: 'input_reference' }));
+      }
       throw error;
     }
 
     const dims = probeDimensions(image.bytes);
     if (!dims) {
-      return reply.code(400).send({ detail: 'input_reference header could not be read' });
+      return reply.code(400).send(
+        apiError(400, 'input_reference header could not be read', {
+          code: 'invalid_image',
+          param: 'input_reference',
+        }),
+      );
     }
 
     // `size` is optional: name a frame and it is validated, or omit it and the
@@ -176,18 +228,27 @@ export default async function videoRoutes(
       if (!spec.resolutions.includes(requested)) {
         return reply
           .code(400)
-          .send({ detail: `size must be one of ${spec.resolutions.join(', ')} or WxH` });
+          .send(
+            apiError(400, `size must be one of ${spec.resolutions.join(', ')} or WxH`, {
+              code: 'invalid_size',
+              param: 'size',
+            }),
+          );
       }
       resolution = requested;
       size = fitSize(dims.width, dims.height, resolution);
     } else {
       const checked = checkSize(requested, spec.resolutions);
       if (!checked) {
-        return reply.code(400).send({
-          detail: `size ${JSON.stringify(requested)} is not a 16-aligned frame within ${spec.resolutions.join(
-            '/',
-          )} limits`,
-        });
+        return reply.code(400).send(
+          apiError(
+            400,
+            `size ${JSON.stringify(requested)} is not a 16-aligned frame within ${spec.resolutions.join(
+              '/',
+            )} limits`,
+            { code: 'invalid_size', param: 'size' },
+          ),
+        );
       }
       size = checked.size;
       resolution = checked.resolution;
@@ -237,7 +298,7 @@ export default async function videoRoutes(
 
   app.get<{ Params: { id: string } }>('/v1/videos/:id', async (request, reply) => {
     const job = jobs.get(request.params.id);
-    if (!job) return reply.code(404).send({ detail: 'video not found' });
+    if (!job) return reply.code(404).send(noSuchVideo(request.params.id));
     return reply.send(respond(job));
   });
 
@@ -246,7 +307,12 @@ export default async function videoRoutes(
     async (request, reply) => {
       const { limit, status } = request.query;
       if (status !== undefined && !isVideoStatus(status)) {
-        return reply.code(400).send({ detail: `unknown status ${JSON.stringify(status)}` });
+        return reply.code(400).send(
+          apiError(400, `unknown status ${JSON.stringify(status)}`, {
+            code: 'invalid_status',
+            param: 'status',
+          }),
+        );
       }
       const list = jobs.list({
         state: status as VideoStatus | undefined,
@@ -258,7 +324,7 @@ export default async function videoRoutes(
 
   app.delete<{ Params: { id: string } }>('/v1/videos/:id', async (request, reply) => {
     const job = jobs.get(request.params.id);
-    if (!job) return reply.code(404).send({ detail: 'video not found' });
+    if (!job) return reply.code(404).send(noSuchVideo(request.params.id));
 
     const now = Date.now();
     if (job.state === 'queued') {
@@ -274,7 +340,9 @@ export default async function videoRoutes(
       return reply.code(202).send(respond(jobs.get(job.id)!));
     }
 
-    return reply.code(409).send({ detail: `video is already ${jobs.get(job.id)?.state}` });
+    return reply.code(409).send(
+      apiError(409, `video is already ${jobs.get(job.id)?.state}`, { code: 'already_finished' }),
+    );
   });
 
   /**
@@ -284,24 +352,30 @@ export default async function videoRoutes(
    */
   app.get<{ Params: { id: string } }>('/v1/videos/:id/content', async (request, reply) => {
     const job = jobs.get(request.params.id);
-    if (!job) return reply.code(404).send({ detail: 'video not found' });
+    if (!job) return reply.code(404).send(noSuchVideo(request.params.id));
 
     const artifact = job.artifacts[0];
     if (!artifact) {
       if (job.state === 'completed') {
-        return reply.code(410).send({ detail: 'content expired' });
+        return reply.code(410).send(
+          apiError(410, 'content expired', { code: 'content_expired' }),
+        );
       }
-      return reply.code(409).send({ detail: `video is ${job.state}, no content yet` });
+      return reply.code(409).send(
+        apiError(409, `video is ${job.state}, no content yet`, { code: 'content_not_ready' }),
+      );
     }
 
     const path = artifacts.resolveArtifact(job.id, artifact.filename);
-    if (!path) return reply.code(404).send({ detail: 'content not found' });
+    if (!path) {
+      return reply.code(404).send(apiError(404, 'content not found', { code: 'content_not_found' }));
+    }
 
     const size = await artifacts.exists(path);
     if (size === null) {
       // Distinguish "never existed" from "swept by the TTL": both are a failed
       // download to the client, but only one is a bug.
-      return reply.code(410).send({ detail: 'content expired' });
+      return reply.code(410).send(apiError(410, 'content expired', { code: 'content_expired' }));
     }
 
     const extension = artifact.filename.split('.').pop()?.toLowerCase() ?? '';
@@ -315,7 +389,8 @@ export default async function videoRoutes(
 
   app.get<{ Params: { id: string } }>('/v1/videos/:id/events', async (request, reply) => {
     const job = jobs.get(request.params.id);
-    if (!job) return reply.code(404).send({ detail: 'video not found' });
-    return reply.send({ id: job.id, events: jobs.events(job.id) });
+    if (!job) return reply.code(404).send(noSuchVideo(request.params.id));
+    // The list envelope, like every other collection this API returns.
+    return reply.send({ object: 'list', data: jobs.events(job.id) });
   });
 }

@@ -115,8 +115,8 @@ describe('auth', () => {
         const res = await h.app.inject({ method, url, headers });
         assert.equal(res.statusCode, 401, `${method} ${url} must reject`);
         assert.deepEqual(
-          res.json(),
-          { detail: 'invalid or missing API key' },
+          res.json().error.message,
+          'invalid or missing API key',
           `${url} must not describe which credential was missing`,
         );
       }
@@ -127,6 +127,12 @@ describe('auth', () => {
     const res = await h.app.inject({ method: 'GET', url: '/health' });
     assert.equal(res.statusCode, 200);
     assert.equal(res.json().status, 'ok');
+
+    // Unix seconds like every other timestamp here, so a client comparing its
+    // own clock against a video's `expires_at` can tell whether the two agree.
+    const time = res.json().time;
+    assert.ok(Number.isInteger(time), 'time must be an integer');
+    assert.ok(Math.abs(time - Math.floor(Date.now() / 1000)) <= 5, 'time must be unix seconds');
   });
 });
 
@@ -161,13 +167,13 @@ describe('input validation', () => {
       payload: body.payload,
     });
     assert.equal(res.statusCode, 400);
-    assert.match(res.json().detail, /input_reference is required/);
+    assert.match(res.json().error.message, /input_reference is required/);
   });
 
   it('refuses a payload that is not actually an image', async () => {
     const res = await submit(h, {}, Buffer.from('#!/bin/sh\nrm -rf /'));
     assert.equal(res.statusCode, 400);
-    assert.match(res.json().detail, /not a JPEG, PNG or WebP/);
+    assert.match(res.json().error.message, /not a JPEG, PNG or WebP/);
   });
 
   it('refuses an unknown model instead of passing it downstream', async () => {
@@ -396,6 +402,6 @@ describe('content serving', () => {
       payload: Buffer.from('clip'),
     });
     assert.equal(res.statusCode, 400);
-    assert.match(res.json().detail, /sha256 mismatch/);
+    assert.match(res.json().error.message, /sha256 mismatch/);
   });
 });

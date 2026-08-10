@@ -29,6 +29,7 @@ import { isSafeFilename } from '../domain/filenames.js';
 import { newSessionId } from '../lib/ids.js';
 import { ArtifactTooLarge } from '../artifacts/store.js';
 import type { Artifact } from '../domain/types.js';
+import { apiError } from '../domain/errors.js';
 
 interface InFlightReport {
   job_id?: unknown;
@@ -91,7 +92,7 @@ export default async function agentRoutes(
   app.post<{ Body: PollBody }>('/v1/agent/poll', async (request, reply) => {
     const body = request.body ?? {};
     const podId = str(body.pod_id);
-    if (!podId) return reply.code(400).send({ detail: 'pod_id is required' });
+    if (!podId) return reply.code(400).send(apiError(400, 'pod_id is required', { code: 'missing_parameter', param: 'pod_id' }));
 
     const now = Date.now();
 
@@ -188,14 +189,14 @@ export default async function agentRoutes(
     '/v1/agent/jobs/:id/input',
     async (request, reply) => {
       const job = jobs.get(request.params.id);
-      if (!job) return reply.code(404).send({ detail: 'job not found' });
+      if (!job) return reply.code(404).send(apiError(404, 'job not found', { code: 'video_not_found' }));
       if (!job.lease_id || job.lease_id !== request.query.lease_id) {
-        return reply.code(409).send({ detail: 'stale_lease' });
+        return reply.code(409).send(apiError(409, 'lease is no longer current', { code: 'stale_lease' }));
       }
-      if (!job.input_path) return reply.code(410).send({ detail: 'input expired' });
+      if (!job.input_path) return reply.code(410).send(apiError(410, 'input expired', { code: 'input_expired' }));
 
       const size = await artifacts.exists(job.input_path);
-      if (size === null) return reply.code(410).send({ detail: 'input expired' });
+      if (size === null) return reply.code(410).send(apiError(410, 'input expired', { code: 'input_expired' }));
 
       return reply
         .header('content-type', 'application/octet-stream')
@@ -214,19 +215,19 @@ export default async function agentRoutes(
     '/v1/agent/jobs/:id/artifact',
     async (request, reply) => {
       const job = jobs.get(request.params.id);
-      if (!job) return reply.code(404).send({ detail: 'job not found' });
+      if (!job) return reply.code(404).send(apiError(404, 'job not found', { code: 'video_not_found' }));
       if (!job.lease_id || job.lease_id !== request.query.lease_id) {
-        return reply.code(409).send({ detail: 'stale_lease' });
+        return reply.code(409).send(apiError(409, 'lease is no longer current', { code: 'stale_lease' }));
       }
 
       const filename = request.query.filename ?? 'output.mp4';
       if (!isSafeFilename(filename)) {
-        return reply.code(400).send({ detail: 'invalid filename' });
+        return reply.code(400).send(apiError(400, 'invalid filename', { code: 'invalid_filename', param: 'filename' }));
       }
 
       const declared = Number(request.headers['content-length']);
       if (Number.isFinite(declared) && declared > config.maxArtifactBytes) {
-        return reply.code(413).send({ detail: 'artifact too large' });
+        return reply.code(413).send(apiError(413, 'artifact too large', { code: 'artifact_too_large' }));
       }
 
       let stored;
@@ -239,7 +240,7 @@ export default async function agentRoutes(
         );
       } catch (error) {
         if (error instanceof ArtifactTooLarge) {
-          return reply.code(413).send({ detail: error.message });
+          return reply.code(413).send(apiError(413, error.message, { code: 'artifact_too_large' }));
         }
         throw error;
       }
@@ -247,7 +248,7 @@ export default async function agentRoutes(
       const expected = request.headers['x-content-sha256'];
       if (typeof expected === 'string' && expected && expected !== stored.sha256) {
         await artifacts.removeJob(job.id);
-        return reply.code(400).send({ detail: 'artifact sha256 mismatch' });
+        return reply.code(400).send(apiError(400, 'artifact sha256 mismatch', { code: 'checksum_mismatch' }));
       }
 
       jobs.addEvent(job.id, 'uploaded', job.pod_id, `${stored.bytes} bytes`);
@@ -273,13 +274,13 @@ export default async function agentRoutes(
     };
   }>('/v1/agent/jobs/:id/result', async (request, reply) => {
     const job = jobs.get(request.params.id);
-    if (!job) return reply.code(404).send({ detail: 'job not found' });
+    if (!job) return reply.code(404).send(apiError(404, 'job not found', { code: 'video_not_found' }));
 
     const leaseId = request.query.lease_id ?? '';
     if (!job.lease_id || job.lease_id !== leaseId) {
       // The defining guarantee: a pod whose lease was revoked cannot overwrite
       // whatever the pod that actually finished the job wrote.
-      return reply.code(409).send({ detail: 'stale_lease' });
+      return reply.code(409).send(apiError(409, 'lease is no longer current', { code: 'stale_lease' }));
     }
 
     const body = request.body ?? {};
@@ -292,7 +293,7 @@ export default async function agentRoutes(
       // the job's own artifact directory.
       const filename = body.filename === undefined ? 'output.mp4' : body.filename;
       if (!isSafeFilename(filename)) {
-        return reply.code(400).send({ detail: 'invalid filename' });
+        return reply.code(400).send(apiError(400, 'invalid filename', { code: 'invalid_filename', param: 'filename' }));
       }
       const artifact: Artifact = {
         media_type: 'video/mp4',
@@ -301,7 +302,7 @@ export default async function agentRoutes(
         ...(str(body.sha256) ? { sha256: str(body.sha256)! } : {}),
       };
       if (!jobs.complete(job.id, leaseId, [artifact], now)) {
-        return reply.code(409).send({ detail: 'stale_lease' });
+        return reply.code(409).send(apiError(409, 'lease is no longer current', { code: 'stale_lease' }));
       }
       pods.recordOutcome(job.pod_id, 'completed');
       await artifacts.removeInput(job.id);
@@ -335,7 +336,7 @@ export default async function agentRoutes(
     }
 
     if (!jobs.fail(job.id, leaseId, message, now)) {
-      return reply.code(409).send({ detail: 'stale_lease' });
+      return reply.code(409).send(apiError(409, 'lease is no longer current', { code: 'stale_lease' }));
     }
     pods.recordOutcome(job.pod_id, 'failed');
     await artifacts.removeInput(job.id);

@@ -56,7 +56,7 @@ describe('lease fencing', () => {
       payload: { state: 'completed' },
     });
     assert.equal(result.statusCode, 409);
-    assert.equal(result.json().detail, 'stale_lease');
+    assert.equal(result.json().error.code, 'stale_lease');
 
     const job = await h.app.inject({ method: 'GET', url: `/v1/videos/${id}`, headers: authHeaders });
     assert.equal(job.json().status, 'in_progress', 'the impostor must not have moved the job');

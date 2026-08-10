@@ -10,13 +10,16 @@
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { FastifyReply, FastifyRequest, preHandlerHookHandler } from 'fastify';
+import { apiError } from './domain/errors.js';
 
 /**
  * The single rejection every client-facing route gives. Shared rather than
  * repeated so a future route cannot reintroduce a message that describes which
  * credential was missing.
  */
-const UNAUTHORIZED = { detail: 'invalid or missing API key' } as const;
+const UNAUTHORIZED = apiError(401, 'invalid or missing API key', {
+  code: 'invalid_api_key',
+});
 
 /**
  * Constant-time comparison of two secrets of arbitrary length. Hashing first
@@ -64,7 +67,9 @@ export function makeRequireAgentSecret(secret: string): preHandlerHookHandler {
   return function requireAgentSecret(request: FastifyRequest, reply: FastifyReply, done) {
     const provided = request.headers['x-agent-secret'];
     if (typeof provided !== 'string' || !safeEqual(provided, secret)) {
-      reply.code(401).send({ detail: 'invalid or missing agent secret' });
+      reply.code(401).send(apiError(401, 'invalid or missing agent secret', {
+        code: 'invalid_agent_secret',
+      }));
       return;
     }
     done();

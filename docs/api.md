@@ -30,9 +30,9 @@ by the gateway. `Authorization: Bearer <key>` is accepted in place of
 A missing Access token gives a redirect to a login page, not a 401 — if you see
 HTML where JSON should be, that is why.
 
-`GET /health` and `GET /metrics` are the unauthenticated routes at the gateway,
-so probes work. Access still covers them unless you add a bypass policy for the
-path — see [deploy/README.md](../deploy/README.md).
+`GET /health` is the one route the gateway leaves unauthenticated, so probes
+work. Access still covers it unless you add a bypass policy for that path — see
+[deploy/README.md](../deploy/README.md).
 
 ## Create a video
 
@@ -156,8 +156,7 @@ capacity frees up when generation finishes on its own.
 | `GET /v1/models` | Models the fleet is serving **right now**, with defaults and limits |
 | `GET /v1/videos?status=&limit=` | List, newest first, in an `{"object":"list","data":[…]}` envelope |
 | `GET /v1/videos/:id/events` | Lifecycle trail — why a video took as long as it did |
-| `GET /health` | Queue depth and fleet capacity (no gateway auth) |
-| `GET /metrics` | Prometheus exposition |
+| `GET /health` | Queue depth, fleet capacity and the gateway's clock (no gateway auth) |
 | `GET /v1/pods` | Per-pod state (admin key) |
 | `POST /v1/pods/:id/drain` | Stop assigning new work to a pod (admin key). No body needed. |
 | `DELETE /v1/pods/:id/drain` | Resume dispatch to a drained pod (admin key) |
@@ -169,16 +168,34 @@ advertising an indefinite queue.
 
 ## Errors
 
-| Status | Meaning |
-|---|---|
-| 400 | Bad parameters — `detail` says which |
-| 401 | Missing or wrong credential. Always `{"detail":"invalid or missing API key"}`, including on the admin routes — a 401 never reveals which credential a route wants. |
-| 404 | Unknown video, or unknown `model` (with `available`) |
-| 409 | Cancelling a video that already finished, or downloading one that has not |
-| 410 | The content expired |
-| 413 | `input_reference` past the configured limit |
-| 415 | Not `multipart/form-data` |
-| 503 | No pod is serving that model, or the queue is full — honour `Retry-After` |
+Errors use OpenAI's envelope, so a client needs one error path for SGLang,
+OpenAI and this gateway:
+
+```json
+{
+  "error": {
+    "message": "prompt is required",
+    "type": "invalid_request_error",
+    "code": "missing_parameter",
+    "param": "prompt"
+  }
+}
+```
+
+`message` is for humans and may be reworded; **branch on `type` and `code`**,
+which are stable. `code` and `param` are always present, `null` where they do
+not apply.
+
+| Status | `type` | Meaning |
+|---|---|---|
+| 400 | `invalid_request_error` | Bad parameters — `param` names the field |
+| 401 | `authentication_error` | Missing or wrong credential. Always the same message, including on the admin routes — a 401 never reveals which credential a route wants. |
+| 404 | `not_found_error` | Unknown video, or unknown `model` (with `available`) |
+| 409 | `invalid_request_error` | Cancelling a video that already finished, or downloading one that has not |
+| 410 | `invalid_request_error` | The content expired |
+| 413 | `invalid_request_error` | `input_reference` past the configured limit |
+| 415 | `invalid_request_error` | Not `multipart/form-data` |
+| 503 | `server_error` | No pod is serving that model (`no_capacity`), or the queue is full (`queue_full`) — honour `Retry-After` |
 
 Both 503s are deliberate backpressure. Nothing in the fleet serving your model
 means the video could only sit in the queue until its deadline, and past a
@@ -222,6 +239,9 @@ server, and one field is typed more strictly:
 
 - `queue_position`, `pod_id` and `attempts` are gateway extras on the video
   object. An OpenAI-shaped client ignores unknown fields.
+- `GET /health` adds `time`, the gateway's clock in unix seconds. Compare it
+  with your own before trusting a countdown to `expires_at`, and watch it stop
+  moving if something between you and the gateway starts caching.
 - `503` with `Retry-After` — a single server has no queue to be full.
 - `seconds` is returned as a **number**, where OpenAI returns a string.
 - `GET /v1/models` carries `resolutions`, `defaults`, `limits` and `pods_ready`

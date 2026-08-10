@@ -272,7 +272,7 @@ describe('scheduling', () => {
       const rejected = await submit(small);
       assert.equal(rejected.statusCode, 503);
       assert.equal(rejected.headers['retry-after'], '30');
-      assert.match(rejected.json().detail, /queue is full/);
+      assert.match(rejected.json().error.message, /queue is full/);
     } finally {
       await small.cleanup();
     }
@@ -284,7 +284,7 @@ describe('scheduling', () => {
     const res = await submit(h);
     assert.equal(res.statusCode, 503);
     assert.equal(res.headers['retry-after'], '30');
-    assert.match(res.json().detail, /no pod is serving/);
+    assert.match(res.json().error.message, /no pod is serving/);
   });
 
   it('re-dispatches in-flight work after a gateway restart rather than failing it', async () => {

@@ -9,6 +9,7 @@ import type {
   FastifyRequest,
 } from 'fastify';
 import type { AppContext } from '../context.js';
+import { apiError } from '../domain/errors.js';
 
 export default async function podRoutes(
   app: FastifyInstance,
@@ -74,7 +75,9 @@ export default async function podRoutes(
   app.get('/v1/pods', async (_request, reply) => {
     const now = Date.now();
     return reply.send({
-      pods: pods.list().map((pod) => ({
+      object: 'list',
+      data: pods.list().map((pod) => ({
+        object: 'pod' as const,
         ...pod,
         connected: now - pod.last_seen_at <= config.podStaleMs,
         last_seen_ago_s: Math.round((now - pod.last_seen_at) / 1000),
@@ -98,10 +101,13 @@ export default async function podRoutes(
 
   function setDrain(id: string, draining: boolean, reply: FastifyReply, log: FastifyRequest['log']) {
     if (!pods.setDraining(id, draining)) {
-      return reply.code(404).send({ detail: 'pod not found' });
+      return reply.code(404).send(apiError(404, `no such pod ${id}`, {
+        code: 'pod_not_found',
+        param: 'id',
+      }));
     }
     log.info({ podId: id, draining }, 'pod drain flag changed');
-    return reply.send({ pod_id: id, draining });
+    return reply.send({ object: 'pod.drain', pod_id: id, draining });
   }
 
   /**

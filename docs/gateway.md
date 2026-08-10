@@ -158,7 +158,7 @@ copy, so the retention window is slack rather than storage.
 
 ## The client contract
 
-The job API is a stable contract, and three of its properties are load-bearing
+The video API is a stable contract, and four of its properties are load-bearing
 for any client. They are enforced by
 [`contract.test.ts`](../gateway/test/contract.test.ts), which models a strict
 client parser and runs it against real gateway responses — so a refactor that
@@ -169,15 +169,19 @@ breaks one of them fails the build rather than the integration:
    the set must not grow without a coordinated change. There is deliberately no
    `cancelling` status: a cancel in flight is an `in_progress` video with a
    flag. They are SGLang's statuses, which are OpenAI's.
-   (`DELETE` may *report* `"state":"cancelling"` in its own response body; that
-   is not the job's state.)
 2. **No server-supplied URLs** — the content lives at
    `/v1/videos/<id>/content`, derived from the id the client already holds. The
    API hands over no URL to follow, so a credential-sending client has nothing
    to validate and a pod-controlled filename has nothing to steer.
 3. **Creation does not block** — `POST /v1/videos` writes the record and returns
-   `202` without touching a pod, so it stays fast enough for a short client
-   timeout even when no capacity exists.
+   without touching a pod, so it stays fast enough for a short client timeout.
+   It refuses fast rather than queueing forever: `503` when no pod serves the
+   model at all, or when the queue is past its ceiling.
+4. **One error envelope** — every failure is
+   `{"error": {"message", "type", "code", "param"}}`, OpenAI's shape. `message`
+   may be reworded; `type` and `code` are what a client branches on. A 401 is
+   identical on every plane, so it never reveals which credential a route
+   wants.
 
 ## Tuning
 
@@ -208,27 +212,22 @@ Client (`X-Api-Key`):
 | `GET /v1/models` | What the fleet is serving right now |
 
 Operator (`X-Admin-Key`, falling back to a client key):
-`GET /v1/pods`, `POST /v1/pods/:id/drain`.
+`GET /v1/pods`, `POST /v1/pods/:id/drain`, `DELETE /v1/pods/:id/drain`.
 
-Unauthenticated: `GET /health`, `GET /metrics`.
+Unauthenticated: `GET /health`.
 
 Pod agent (`X-Agent-Secret`): see [agent-protocol.md](agent-protocol.md).
 
 ## Observability
 
 `/health` gives queue depth, the age of the oldest queued job, and fleet
-capacity. `/metrics` exports the same in Prometheus format — deliberately the
-exact set of series an autoscaler would need:
+capacity — connected and ready pod counts, plus total and busy slots. Those are
+the numbers worth watching: `pods.ready` falling to zero means the fleet is
+gone, and a climbing `oldest_queued_age_s` means work is arriving faster than
+it drains.
 
-```
-nidora_queue_depth              nidora_pods_connected
-nidora_jobs_queued              nidora_pods_ready
-nidora_jobs_running             nidora_pod_slots_total
-nidora_oldest_queued_seconds    nidora_pod_slots_busy
-```
-
-Adding automatic pod provisioning later is a matter of reading these and driving
-the Vast/RunPod APIs; nothing new needs instrumenting.
+They are also what automatic pod provisioning would read, if it is ever added,
+so driving the Vast/RunPod APIs from them needs nothing new instrumented.
 
 `GET /v1/videos/:id/events` answers "why did this take fourteen minutes" with
 a timestamped trail: `created → assigned → uploaded → completed`, including any

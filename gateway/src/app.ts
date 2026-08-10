@@ -7,6 +7,7 @@ import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import { makeRequireAdminKey, makeRequireAgentSecret, makeRequireApiKey } from './auth.js';
 import type { Config } from './config.js';
 import type { AppContext } from './context.js';
+import { apiError } from './domain/errors.js';
 import { ArtifactStore } from './artifacts/store.js';
 import { JobStore } from './db/jobs.js';
 import { PodStore } from './db/pods.js';
@@ -19,7 +20,7 @@ import modelRoutes from './routes/models.js';
 import podRoutes from './routes/pods.js';
 import type { Db } from './db/sqlite.js';
 
-export const VERSION = '0.4.2';
+export const VERSION = '0.6.0';
 
 export interface BuiltApp {
   app: FastifyInstance;
@@ -83,9 +84,9 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
     if (status >= 500) {
       request.log.error({ err: error, url: request.url }, 'request failed');
       // Never leak an internal message to a client; the log has the detail.
-      return reply.code(status).send({ detail: 'internal error' });
+      return reply.code(status).send(apiError(status, 'internal error', { code: 'internal_error' }));
     }
-    return reply.code(status).send({ detail: error.message });
+    return reply.code(status).send(apiError(status, error.message));
   });
 
   await app.register(healthRoutes, { ctx, version: VERSION });
