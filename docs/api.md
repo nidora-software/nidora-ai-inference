@@ -223,7 +223,7 @@ Each pod runs SGLang Diffusion's OpenAI-compatible API
 why the two surfaces match.
 
 That server has **no authentication of its own**, which is exactly why it is
-bound to localhost in gateway mode. Clients never speak to it.
+bound to localhost. Clients never speak to it.
 
 The exact field names SGLang accepts (`negative_prompt`, `num_inference_steps`,
 `guidance_scale`, `seed`) should be confirmed against a pod's `/openapi.json`
@@ -246,6 +246,3 @@ server, and one field is typed more strictly:
 - `seconds` is returned as a **number**, where OpenAI returns a string.
 - `GET /v1/models` carries `resolutions`, `defaults`, `limits` and `pods_ready`
   alongside the standard `id`/`object`.
-
-A pod can still be run standalone as its own endpoint, speaking the raw SGLang
-API — see [deploy-pods.md](deploy-pods.md#standalone-mode).

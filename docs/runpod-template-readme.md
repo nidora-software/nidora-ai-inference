@@ -15,9 +15,9 @@ gateway and pull work from it — no inbound networking required.
 | GPU | **H100 / A100 80 GB** | bf16 A14B needs ~70 GB resident for full speed |
 | System RAM | **128 GB+** | fp32 snapshot stages through RAM at load — less gets OOM-killed (exit -9) |
 | Volume | **300 GB** network volume at `/workspace` | ~126 GB model snapshot lives in the volume's HF cache |
-| Ports | none | gateway mode is outbound-only |
+| Ports | none | the pod is outbound-only |
 
-## Template setup (gateway mode)
+## Template setup
 
 - **Image**: `erenck/nidora-ai-inference:latest` (pin a commit-SHA tag for reproducibility)
 - **Expose HTTP Ports**: none
@@ -26,7 +26,6 @@ gateway and pull work from it — no inbound networking required.
   ```
   MODEL_PATH=Wan-AI/Wan2.2-I2V-A14B-Diffusers   # REQUIRED
   LORA_PATH=lightx2v/Wan2.2-Distill-Loras       # needed for 4-step generation
-  SGLANG_HOST=127.0.0.1                         # keep sglang off the network
   GATEWAY_URL=https://<your-hostname>
   GATEWAY_AGENT_SECRET=<fleet agent secret>
   CF_ACCESS_CLIENT_ID=<service-token-id>.access
@@ -35,9 +34,9 @@ gateway and pull work from it — no inbound networking required.
   ```
 
 **Security**: the SGLang diffusion server has **no built-in API auth**, and
-RunPod's `*.proxy.runpod.net` URLs are publicly reachable. In gateway mode
-SGLang binds to `127.0.0.1` and no port is exposed, so the proxy has nothing to
-reach — leave it that way.
+RunPod's `*.proxy.runpod.net` URLs are publicly reachable. SGLang binds to
+`127.0.0.1` and no port is exposed, so the proxy has nothing to reach — leave it
+that way.
 
 `POD_ID` is auto-detected from `RUNPOD_POD_ID`, which is stable across restarts
 — leave it unset.
@@ -71,10 +70,3 @@ Clients talk to the gateway, never to the pod. See [api.md](api.md).
 - Drain before destroying (`POST /v1/pods/<id>/drain`) so in-flight clips
   finish; a hard destroy is safe too, it just costs a retry.
 - Image updates: restart to pull the newest `latest`, or pin a SHA tag.
-
-## Standalone mode
-
-To run a pod as its own public endpoint instead of joining the fleet, set
-`CF_TUNNEL_TOKEN`, expose port 8000, and leave `GATEWAY_URL` unset — see
-[deploy-pods.md](deploy-pods.md#standalone-mode). Cloudflare Access is
-mandatory in that mode; do not rely on the RunPod proxy for auth.

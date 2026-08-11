@@ -9,12 +9,10 @@ FROM ${SGLANG_BASE}
 # extra against that same tree so engine and deps stay in sync.
 RUN pip install --no-cache-dir -e "/sgl-workspace/sglang/python[diffusion]"
 
-# cloudflared for optional stable HTTPS via Cloudflare Tunnel (CF_TUNNEL_TOKEN).
-ADD https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 /usr/local/bin/cloudflared
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/cloudflared /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# The pull agent for gateway mode (GATEWAY_URL) — see the stable Dockerfile.
+# The pull agent — see the stable Dockerfile.
 COPY agent /opt/nidora-agent
 RUN pip install --no-cache-dir /opt/nidora-agent
 
@@ -22,6 +20,5 @@ ENV HF_HOME=/workspace/hf \
     SGLANG_DIFFUSION_CACHE_ROOT=/workspace/sgl_diffusion
 
 VOLUME ["/workspace"]
-EXPOSE 8000
 
 ENTRYPOINT ["docker-entrypoint.sh"]

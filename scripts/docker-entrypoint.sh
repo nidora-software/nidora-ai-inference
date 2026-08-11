@@ -1,68 +1,51 @@
 #!/usr/bin/env bash
-# Container entrypoint. Supervises up to three processes:
+# Container entrypoint. Supervises two processes:
 #
-#   sglang serve   always
-#   cloudflared    when CF_TUNNEL_TOKEN is set   (standalone/tunnel mode)
-#   nidora_agent   when GATEWAY_URL is set       (gateway/fleet mode)
+#   sglang serve   the diffusion server, on loopback
+#   nidora_agent   the pull agent that dials out to the gateway
+#
+# A pod is only ever a member of a gateway fleet: it publishes no port, runs no
+# tunnel, and needs no DNS record. sglang's diffusion server has NO built-in
+# auth (verified against v0.5.16 source), which is why it stays on 127.0.0.1
+# and the agent is the only thing that talks to it.
 #
 # Environment:
 #   MODEL_PATH             REQUIRED — HF repo id or local path (no default)
+#   GATEWAY_URL            REQUIRED — e.g. https://<your-hostname>
+#   GATEWAY_AGENT_SECRET   REQUIRED — matches the gateway's AGENT_SHARED_SECRET
 #   LORA_PATH              optional — LoRA repo id/path; unset = no LoRA
 #   PORT                   default 8000
-#   SGLANG_HOST            default 0.0.0.0 — set 127.0.0.1 in gateway mode
-#   CF_TUNNEL_TOKEN        optional: Cloudflare Tunnel for a stable HTTPS hostname
+#   SGLANG_HOST            default 127.0.0.1 — only change to debug from the host
 #   SGLANG_EXTRA_ARGS      extra `sglang serve` flags appended verbatim
 #                          (attention backend, offload, torch compile, parallelism)
-#   GATEWAY_URL            optional: enables the pull agent (e.g. https://<your-hostname>)
-#   GATEWAY_AGENT_SECRET   required when GATEWAY_URL is set
 #   POD_ID                 optional: stable pod identity
 #                          (see agent/src/nidora_agent/config.py)
 #   AGENT_MAX_IN_FLIGHT    default 1
 #   CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET  Access service token for the gateway
 #
-# TWO WAYS TO RUN
-#
-#   Gateway mode (recommended): GATEWAY_URL set, no CF_TUNNEL_TOKEN, and
-#   SGLANG_HOST=127.0.0.1. The agent dials out to the gateway and pulls work.
-#   Nothing on the pod is reachable from outside — no port, no tunnel, no DNS.
-#
-#   Standalone mode (the original): CF_TUNNEL_TOKEN set, no GATEWAY_URL. The
-#   pod is its own public endpoint. sglang's diffusion server has NO built-in
-#   auth (verified against v0.5.16 source), so the hostname MUST be protected
-#   by Cloudflare Access and the port MUST NOT be published.
-#
 # `--warmup-mode server` is the CLI's own default for `serve`; not repeated here.
 set -uo pipefail
 
 PORT="${PORT:-8000}"
-SGLANG_HOST="${SGLANG_HOST:-0.0.0.0}"
+SGLANG_HOST="${SGLANG_HOST:-127.0.0.1}"
 
-if [ -z "${MODEL_PATH:-}" ]; then
-    echo "[entrypoint] ERROR: MODEL_PATH is required (e.g. MODEL_PATH=Wan-AI/Wan2.2-I2V-A14B-Diffusers)" >&2
-    exit 1
-fi
+for var in MODEL_PATH GATEWAY_URL GATEWAY_AGENT_SECRET; do
+    if [ -z "${!var:-}" ]; then
+        echo "[entrypoint] ERROR: $var is required" >&2
+        exit 1
+    fi
+done
 
-if [ -n "${GATEWAY_URL:-}" ] && [ -z "${GATEWAY_AGENT_SECRET:-}" ]; then
-    echo "[entrypoint] ERROR: GATEWAY_AGENT_SECRET is required when GATEWAY_URL is set" >&2
-    exit 1
-fi
-
-if [ -z "${GATEWAY_URL:-}" ] && [ -z "${CF_TUNNEL_TOKEN:-}" ]; then
-    echo "[entrypoint] WARNING: neither GATEWAY_URL nor CF_TUNNEL_TOKEN is set — the API has"
-    echo "[entrypoint]          no built-in auth; only expose the port on trusted networks"
-fi
-
-if [ -n "${GATEWAY_URL:-}" ] && [ "$SGLANG_HOST" = "0.0.0.0" ]; then
-    echo "[entrypoint] NOTE: gateway mode with SGLANG_HOST=0.0.0.0 — sglang is listening on all"
-    echo "[entrypoint]       interfaces with no auth. Set SGLANG_HOST=127.0.0.1 unless a"
-    echo "[entrypoint]       published port is genuinely needed."
+if [ "$SGLANG_HOST" != "127.0.0.1" ] && [ "$SGLANG_HOST" != "localhost" ]; then
+    echo "[entrypoint] WARNING: SGLANG_HOST=$SGLANG_HOST — sglang is listening beyond loopback"
+    echo "[entrypoint]          with no auth. Nothing outside the pod needs to reach it."
 fi
 
 # --- process supervision -----------------------------------------------------
 # `exec`ing sglang would replace this shell and leave nothing to supervise the
 # agent. Instead every child is tracked, and the first one to exit takes the
-# whole container down: a pod that has lost its agent (or its tunnel) is not
-# usable, and a clean exit lets the provider restart it.
+# whole container down: a pod that has lost its agent is not usable, and a clean
+# exit lets the provider restart it.
 
 pids=()
 names=()
@@ -94,12 +77,6 @@ on_signal() {
 }
 trap on_signal TERM INT
 
-# The tunnel comes up first so the hostname is reachable the moment sglang is.
-if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
-    echo "[entrypoint] cloudflared tunnel -> localhost:${PORT}"
-    start cloudflared cloudflared tunnel --no-autoupdate run --token "$CF_TUNNEL_TOKEN"
-fi
-
 args=(
     --model-path "$MODEL_PATH"
     --host "$SGLANG_HOST"
@@ -118,10 +95,8 @@ start sglang sglang serve "${args[@]}" ${SGLANG_EXTRA_ARGS:-} "$@"
 
 # The agent starts immediately and reports sglang as not-ready until its health
 # check passes, so the gateway withholds work during the ~10 minute model load.
-if [ -n "${GATEWAY_URL:-}" ]; then
-    echo "[entrypoint] gateway mode: pulling jobs from ${GATEWAY_URL}"
-    start agent python -m nidora_agent
-fi
+echo "[entrypoint] pulling jobs from ${GATEWAY_URL}"
+start agent python -m nidora_agent
 
 # Wait for the first child to exit.
 #

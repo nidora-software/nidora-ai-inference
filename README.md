@@ -72,20 +72,18 @@ Everything is env-driven — no code changes to switch models or tune:
 | Env | Required | Purpose |
 |---|---|---|
 | `MODEL_PATH` | **yes** | HF repo id or local path of the served model |
+| `GATEWAY_URL` | **yes** | The gateway to pull work from, e.g. `https://<your-hostname>` |
+| `GATEWAY_AGENT_SECRET` | **yes** | Shared secret for the agent control plane |
 | `LORA_PATH` | no | LoRA repo id/path; unset = no LoRA |
 | `PORT` | no | SGLang HTTP port (default 8000) |
-| `SGLANG_HOST` | no | Bind address (default `0.0.0.0`; use `127.0.0.1` in gateway mode) |
+| `SGLANG_HOST` | no | Bind address (default `127.0.0.1`) |
 | `SGLANG_EXTRA_ARGS` | no | extra `sglang serve` flags (attention backend, offload, torch compile, parallelism) |
-| `GATEWAY_URL` | gateway mode | Enables the pull agent, e.g. `https://<your-hostname>` |
-| `GATEWAY_AGENT_SECRET` | gateway mode | Shared secret for the agent control plane |
-| `CF_ACCESS_CLIENT_ID` / `_SECRET` | gateway mode | Cloudflare Access service token |
+| `CF_ACCESS_CLIENT_ID` / `_SECRET` | no | Cloudflare Access service token for the gateway |
 | `POD_ID` | no | Stable pod identity; auto-detected from the provider |
 | `AGENT_MAX_IN_FLIGHT` | no | Concurrent jobs (default 1 — SGLang serialises on the GPU) |
-| `CF_TUNNEL_TOKEN` | standalone mode | Cloudflare Tunnel, for running a pod as its own endpoint |
 
-A pod with `GATEWAY_URL` unset behaves exactly as it did before the gateway
-existed: cloudflared plus a public SGLang port. Existing templates keep working
-untouched.
+A pod is only ever a member of a fleet — it has no standalone mode and refuses
+to start without a gateway to pull from.
 
 Model weights are never baked into the image; they download once into the
 volume-backed HF cache (`HF_HOME=/workspace/hf`).
@@ -97,14 +95,13 @@ See [deploy/README.md](deploy/README.md) for secrets and
 
 ## Run a pod
 
-Gateway mode — the pod is invisible from the internet:
+The pod is invisible from the internet:
 
 ```bash
 docker run --gpus all \
   -v /path/to/volume:/workspace \
   -e MODEL_PATH=<org/model-repo> \
   -e LORA_PATH=<org/lora-repo> \
-  -e SGLANG_HOST=127.0.0.1 \
   -e GATEWAY_URL=https://<your-hostname> \
   -e GATEWAY_AGENT_SECRET=<secret> \
   -e CF_ACCESS_CLIENT_ID=<id>.access \
@@ -119,8 +116,8 @@ volume; smaller cards can work via SGLang offload/quantization flags at a
 latency cost.
 
 **Security note**: the SGLang diffusion server has **no built-in API auth** —
-never expose its port publicly. In gateway mode bind it to `127.0.0.1`; in
-standalone mode run tunnel-only with Cloudflare Access in front (see
+never expose its port publicly. It binds to `127.0.0.1` by default and the agent
+is the only thing that talks to it; leave it that way (see
 [docs/deploy-pods.md](docs/deploy-pods.md)).
 
 ## Develop
@@ -144,9 +141,9 @@ to a pod.
 ```
 gateway/                     # the queue/orchestrator service (Node + Fastify + SQLite)
 agent/                       # the pod-side pull agent (Python), installed into the GPU image
-Dockerfile                   # GPU pod image: pinned SGLang + diffusion extra + cloudflared + agent
+Dockerfile                   # GPU pod image: pinned SGLang + diffusion extra + agent
 Dockerfile.nightly           # same, on a date-pinned SGLang nightly
-scripts/docker-entrypoint.sh # supervises cloudflared / sglang serve / the agent
+scripts/docker-entrypoint.sh # supervises sglang serve + the agent
 deploy/                      # compose overlay, droplet provisioning, deployment guide
 docs/                        # see the documentation table above
 ```

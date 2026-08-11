@@ -6,14 +6,12 @@ FROM lmsysorg/sglang:v0.5.16-cu129
 # The base image ships the LLM stack; add the diffusion engine (FastVideo).
 RUN pip install --no-cache-dir "sglang[diffusion]==0.5.16"
 
-# cloudflared for optional stable HTTPS via Cloudflare Tunnel (CF_TUNNEL_TOKEN).
-ADD https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 /usr/local/bin/cloudflared
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/cloudflared /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# The pull agent for gateway mode (GATEWAY_URL). Installed last so editing it
-# never busts the expensive sglang[diffusion] layer above. Its only dependency
-# is httpx, which the base image already ships.
+# The pull agent. Installed last so editing it never busts the expensive
+# sglang[diffusion] layer above. Its only dependency is httpx, which the base
+# image already ships.
 COPY agent /opt/nidora-agent
 RUN pip install --no-cache-dir /opt/nidora-agent
 
@@ -25,7 +23,8 @@ RUN pip install --no-cache-dir /opt/nidora-agent
 ENV HF_HOME=/workspace/hf \
     SGLANG_DIFFUSION_CACHE_ROOT=/workspace/sgl_diffusion
 
+# No EXPOSE: sglang binds loopback and the agent is outbound-only, so the pod
+# has nothing to publish.
 VOLUME ["/workspace"]
-EXPOSE 8000
 
 ENTRYPOINT ["docker-entrypoint.sh"]

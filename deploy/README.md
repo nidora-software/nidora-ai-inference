@@ -43,8 +43,8 @@ echo "INFERENCE_AGENT_SECRET=$(openssl rand -hex 32)" >> .env   # pods
    Docker's embedded DNS resolves the compose service name.
 3. Copy the tunnel token into `INFERENCE_CF_TUNNEL_TOKEN`.
 
-The old per-pod tunnels can be deleted once the pods are switched to gateway
-mode — in gateway mode a pod needs no tunnel, no hostname and no open port.
+The old per-pod tunnels can be deleted once the pods are switched over — a pod
+now needs no tunnel, no hostname and no open port.
 
 ## 3. Cloudflare Access
 
@@ -90,7 +90,7 @@ curl https://<your-hostname>/health \
 ## 5. Point the pods at it
 
 On each pod template, set `GATEWAY_URL`, `GATEWAY_AGENT_SECRET` and the Access
-pair, drop `CF_TUNNEL_TOKEN`, and set `SGLANG_HOST=127.0.0.1`. See
+pair, and publish no ports. See
 [../docs/deploy-pods.md](../docs/deploy-pods.md).
 
 Watch them arrive:

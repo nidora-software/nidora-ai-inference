@@ -1,6 +1,6 @@
 """Client for the local SGLang Diffusion server.
 
-The server binds 127.0.0.1 in gateway mode and has no authentication of its
+The server binds 127.0.0.1 and has no authentication of its
 own — which is precisely why nothing outside the pod may reach it.
 """
 

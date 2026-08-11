@@ -15,13 +15,13 @@ gateway and pull work from it — no inbound networking required.
 | GPU | **H100 / A100 80 GB** | bf16 A14B needs ~70 GB resident for full speed |
 | System RAM | **128 GB+** | fp32 snapshot stages through RAM at load; Vast enforces the allocation as a hard limit — less gets OOM-killed (exit -9). Filter offers by CPU RAM. |
 | Disk | 20 GB container + **300 GB volume** at `/workspace` | ~126 GB model snapshot lives in the volume's HF cache |
-| Ports | none | gateway mode is outbound-only |
+| Ports | none | the pod is outbound-only |
 | Host CUDA | ≥ 12.9 | set Min CUDA in the offer filter |
 
 Also filter for high `inet_down` — the one-time snapshot download dominates
 first-boot time.
 
-## Template setup (gateway mode)
+## Template setup
 
 - **Image**: `erenck/nidora-ai-inference:latest`
 - **Launch mode**: Docker ENTRYPOINT, args empty
@@ -31,7 +31,6 @@ first-boot time.
   ```
   -e MODEL_PATH=Wan-AI/Wan2.2-I2V-A14B-Diffusers   # REQUIRED
   -e LORA_PATH=lightx2v/Wan2.2-Distill-Loras       # needed for 4-step generation
-  -e SGLANG_HOST=127.0.0.1                         # keep sglang off the network
   -e GATEWAY_URL=https://<your-hostname>
   -e GATEWAY_AGENT_SECRET=<fleet agent secret>
   -e CF_ACCESS_CLIENT_ID=<service-token-id>.access
@@ -39,9 +38,9 @@ first-boot time.
   -e SGLANG_EXTRA_ARGS=...                         # optional tuning, see below
   ```
 
-**Security**: the SGLang diffusion server has **no built-in API auth**. In
-gateway mode it binds to `127.0.0.1` and nothing outside the container can
-reach it. Do not map port 8000; there is no reason to in this mode.
+**Security**: the SGLang diffusion server has **no built-in API auth**. It binds
+to `127.0.0.1` and nothing outside the container can reach it. Do not map port
+8000; there is no reason to.
 
 `POD_ID` is auto-detected from Vast's container id, which is stable across
 restarts — leave it unset.
@@ -82,10 +81,3 @@ Clients talk to the gateway, never to the pod. See [api.md](api.md).
 - Drain before destroying (`POST /v1/pods/<id>/drain`) so in-flight clips
   finish; a hard destroy is safe too, it just costs a retry.
 - Pin a commit-SHA image tag for reproducibility; `:latest` tracks main.
-
-## Standalone mode
-
-To run a pod as its own public endpoint instead of joining the fleet, set
-`CF_TUNNEL_TOKEN` and leave `GATEWAY_URL` unset — see
-[deploy-pods.md](deploy-pods.md#standalone-mode). Cloudflare Access is
-mandatory in that mode.

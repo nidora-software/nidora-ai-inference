@@ -1,7 +1,7 @@
 """Agent configuration, entirely from the environment.
 
-The agent only starts when GATEWAY_URL is set, so a pod launched the old way
-(cloudflared + a public SGLang port) behaves exactly as it did before.
+GATEWAY_URL and GATEWAY_AGENT_SECRET are both required: a pod exists only as a
+member of a gateway fleet, and one without them has nothing to pull work from.
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         raise SystemExit("[agent] GATEWAY_URL is required")
     secret = env.get("GATEWAY_AGENT_SECRET") or ""
     if not secret:
-        raise SystemExit("[agent] GATEWAY_AGENT_SECRET is required when GATEWAY_URL is set")
+        raise SystemExit("[agent] GATEWAY_AGENT_SECRET is required")
 
     headers = {"X-Agent-Secret": secret}
     access_id = env.get("CF_ACCESS_CLIENT_ID")
