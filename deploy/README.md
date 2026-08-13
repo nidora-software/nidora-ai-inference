@@ -12,11 +12,13 @@ pods    ──► <your-hostname> ──┘                        (compose netw
 
 ## 1. Secrets
 
-Generate them once and put them in the compose stack's `.env`:
+Two random strings, generated once. They live in the `.env` beside the compose
+file — the step 4 snippet creates both, so this section is what they are, not a
+command to run twice:
 
 ```bash
-echo "INFERENCE_API_KEYS=$(openssl rand -hex 32)"     >> .env   # clients
-echo "INFERENCE_AGENT_SECRET=$(openssl rand -hex 32)" >> .env   # pods
+openssl rand -hex 32   # INFERENCE_API_KEYS      — held by clients
+openssl rand -hex 32   # INFERENCE_AGENT_SECRET  — held by every pod
 ```
 
 | Variable | Who holds it | Notes |
@@ -64,32 +66,66 @@ reach the gateway — the symptom is a 302 to the login page rather than a 401.
 
 ## 4. Bring it up
 
-The stack is [../gateway/compose.yml](../gateway/compose.yml) — one file, used by
-every path below. It only ever runs a published image (CI pushes one per merge),
-so it runs unchanged on a host with no source tree and a deploy is a pull.
+The whole deployment is two files in one directory: `compose.yml` and `.env`.
+The compose file runs a published image (CI pushes one per merge) and builds
+nothing, so the host needs Docker and neither the repository nor a toolchain.
+There is no service manager in front of it — `restart: unless-stopped` plus
+dockerd starting at boot is what survives a reboot, and every operation below is
+a `docker compose` command run from that directory.
 
-### On a fresh droplet
+### On any host with Docker
 
-[droplet-user-data.sh](droplet-user-data.sh) provisions a bare Ubuntu 24.04 box:
-Docker, a firewall that allows only SSH, swap, log caps, generated secrets, an
-hourly disk check, and a `nidora-gateway` systemd unit. It installs
-`gateway/compose.yml` rather than writing its own copy — downloading it when
-pasted into DigitalOcean's **User data** field, or taking the sibling file when
-run from a checkout.
+Six commands, no clone:
 
 ```bash
-# from a checkout on the box — uses ../gateway/compose.yml directly
-sudo bash deploy/droplet-user-data.sh
+sudo install -d -m 0755 /opt/nidora
+cd /opt/nidora
 
-# or pasted into user data / run standalone, pinned to a release
+# The stack. Swap `main` for a tag or commit SHA to pin what you deploy.
+sudo curl -fsSLo compose.yml \
+  https://raw.githubusercontent.com/nidora-software/nidora-ai-inference/main/gateway/compose.yml
+
+# Its configuration: the two secrets from step 1 and the tunnel token from step 2.
+sudo tee .env >/dev/null <<EOF
+INFERENCE_API_KEYS=$(openssl rand -hex 32)
+INFERENCE_AGENT_SECRET=$(openssl rand -hex 32)
+INFERENCE_CF_TUNNEL_TOKEN=<token from Cloudflare>
+EOF
+sudo chmod 600 .env
+
+sudo docker compose up -d
+```
+
+`docker compose` reads `.env` from the working directory, which is why both
+files live together and why every later command starts with `cd /opt/nidora`.
+Keep that `.env` at mode 600 and off every backup that leaves the box: it holds
+the key to the whole fleet.
+
+Print the two generated secrets — the clients and the pods need them:
+
+```bash
+sudo grep -E 'INFERENCE_(API_KEYS|AGENT_SECRET)' /opt/nidora/.env
+```
+
+### On a bare droplet
+
+[droplet-user-data.sh](droplet-user-data.sh) does the above plus the box itself:
+Docker from the official repository, a firewall that allows only SSH, swap,
+container log caps, unattended security upgrades, generated secrets, and an
+hourly disk-fill warning. Paste it into DigitalOcean's **User data** field when
+creating the droplet, or run it as root on an existing one.
+
+```bash
+# on the box, pinned to a release
 INFERENCE_COMPOSE_REF=v0.7.0 sudo -E bash droplet-user-data.sh
 ```
 
-Re-running is safe, and is how a box is upgraded: it updates packages,
-reinstalls the compose file, applies an `INFERENCE_IMAGE` you pass, and restarts
-the stack — while never regenerating the secrets in `/opt/nidora/.env`.
-Recommended size is 1 vCPU / 2 GB / 50 GB — the gateway container is capped at
-1 GB, so a 1 GB droplet leaves nothing for the kernel, dockerd and cloudflared.
+It downloads the same `gateway/compose.yml`, or uses the sibling file if you
+happen to run it from a checkout. Re-running is safe and is how a box is
+upgraded: packages, compose file and containers are refreshed, and the secrets
+in `/opt/nidora/.env` are never regenerated. Recommended size is 1 vCPU / 2 GB /
+50 GB — the gateway container is capped at 1 GB, so a 1 GB droplet leaves
+nothing for the kernel, dockerd and cloudflared.
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -99,31 +135,29 @@ Recommended size is 1 vCPU / 2 GB / 50 GB — the gateway container is capped at
 | `INFERENCE_CF_TUNNEL_TOKEN` | empty | Better left empty and filled into `/opt/nidora/.env` after boot — user data stays readable at the droplet's metadata endpoint. |
 
 Without a tunnel token the script provisions everything and stops short of
-starting the stack; add the token and `systemctl start nidora-gateway`.
+starting the stack; add the token to `/opt/nidora/.env`, then `cd /opt/nidora &&
+sudo docker compose up -d`.
 
-### On a host you already run
+### Alongside an existing stack
 
-Standalone:
-
-```bash
-docker compose -f gateway/compose.yml up -d
-```
-
-Or as an overlay on an existing stack, so both share a network:
+Pass the other compose file first; its `name:` (or `COMPOSE_PROJECT_NAME`)
+decides the project, and these two services join it and share its network:
 
 ```bash
 docker compose \
   -f /path/to/your/docker-compose.yml \
-  -f gateway/compose.yml \
+  -f compose.yml \
   up -d inference-gateway inference-cloudflared
 ```
 
-Both pull the published image. To try an unreleased change, build and tag it
-yourself and point `INFERENCE_IMAGE` at the result:
+### Running an unreleased build
+
+The compose file never builds. Build and tag the image yourself, then point
+`INFERENCE_IMAGE` at it:
 
 ```bash
-docker build -t nidora-gateway:dev gateway/
-INFERENCE_IMAGE=nidora-gateway:dev docker compose -f gateway/compose.yml up -d
+docker build -t nidora-gateway:dev gateway/     # from a checkout
+INFERENCE_IMAGE=nidora-gateway:dev docker compose up -d
 ```
 
 Then check it:
@@ -156,11 +190,19 @@ API and the properties a client must respect are in
 
 ## Operations
 
+All of the host-side commands run from `/opt/nidora`, where `compose.yml` and
+`.env` live.
+
 | Task | Command |
 |---|---|
-| Upgrade / roll back (droplet) | `INFERENCE_IMAGE=…/gateway:<sha> sudo -E bash droplet-user-data.sh`, or edit `INFERENCE_IMAGE` in `/opt/nidora/.env` and `systemctl restart nidora-gateway` |
-| Apply a compose change (droplet) | re-run `droplet-user-data.sh`, or copy `gateway/compose.yml` to `/opt/nidora/compose.yml` and restart the unit |
-| What the box is running | `grep INFERENCE_IMAGE /opt/nidora/.env` |
+| Is it up | `docker compose ps` |
+| Logs | `docker compose logs -f inference-gateway` |
+| Restart | `docker compose restart inference-gateway` |
+| Stop / start | `docker compose down` / `docker compose up -d` |
+| Upgrade to the latest image | `docker compose pull && docker compose up -d` |
+| Pin or roll back a version | set `INFERENCE_IMAGE=…/gateway:<sha>` in `.env`, then `docker compose up -d` |
+| What is it running | `grep INFERENCE_IMAGE .env` (unset means `:latest`) |
+| Take a compose change | re-download `compose.yml`, then `docker compose up -d` |
 | Queue and fleet state | `curl -s $GW/health \| jq` |
 | Per-pod detail | `curl -s $GW/v1/pods -H "X-Api-Key: $KEY" \| jq` |
 | Retire a pod politely | `curl -X POST $GW/v1/pods/<id>/drain -H "X-Api-Key: $KEY"` |

@@ -3,7 +3,10 @@
 #
 # Paste into DigitalOcean's "User data" field when creating the droplet, or
 # scp it onto an existing box and run it as root. Idempotent: re-running
-# upgrades the packages and restarts the stack without regenerating secrets.
+# upgrades the packages and redeploys the stack without regenerating secrets.
+#
+# It is a convenience, not a requirement: the stack is a compose file and an
+# .env, and deploy/README.md sets both up by hand in about six commands.
 #
 #   Recommended droplet: 1 vCPU / 2 GB / 50 GB. The gateway container is
 #   capped at 1 GB (see mem_limit below), so a 1 GB droplet has no room left
@@ -15,6 +18,11 @@
 #
 # The stack definition is gateway/compose.yml, installed verbatim — this script
 # holds no second copy to drift out of step with it.
+#
+# The stack is plain `docker compose` in /opt/nidora, with no systemd unit in
+# front of it: `restart: unless-stopped` plus dockerd starting at boot already
+# survives a reboot, and a wrapper unit only adds a second way to describe the
+# same thing. Every operation is a compose command — see deploy/README.md.
 set -euo pipefail
 
 # Everything from here lands in the log rather than the void cloud-init
@@ -67,7 +75,7 @@ INSTALL_DIR=/opt/nidora
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get upgrade -y
-apt-get install -y ca-certificates curl gnupg jq ufw unattended-upgrades
+apt-get install -y ca-certificates cron curl gnupg jq ufw unattended-upgrades
 
 # Security updates apply themselves. This box holds the fleet's agent secret
 # and is reachable from the internet through the tunnel.
@@ -174,7 +182,7 @@ INFERENCE_ADMIN_KEYS=
 INFERENCE_CF_TUNNEL_TOKEN=${INFERENCE_CF_TUNNEL_TOKEN}
 
 # The image the stack runs. Swap the tag for a commit SHA to pin a release,
-# then: systemctl restart nidora-gateway
+# then: cd /opt/nidora && docker compose pull && docker compose up -d
 INFERENCE_IMAGE=${INFERENCE_IMAGE}
 EOF
     chmod 600 "$INSTALL_DIR/.env"
@@ -190,78 +198,52 @@ elif [ "$IMAGE_PINNED_BY_CALLER" = 1 ]; then
     echo "[provision] image set to ${INFERENCE_IMAGE}"
 fi
 
-# systemd owns the stack so a reboot brings it back and `systemctl restart
-# nidora-gateway` is the one command an operator needs.
-cat > /etc/systemd/system/nidora-gateway.service <<EOF
-[Unit]
-Description=Nidora inference gateway
-Requires=docker.service
-After=docker.service network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-WorkingDirectory=${INSTALL_DIR}
-ExecStartPre=/usr/bin/docker compose -f compose.yml pull --quiet
-ExecStart=/usr/bin/docker compose -f compose.yml up -d --remove-orphans
-ExecStop=/usr/bin/docker compose -f compose.yml down
-TimeoutStartSec=300
-
-[Install]
-WantedBy=multi-user.target
-EOF
-systemctl daemon-reload
-systemctl enable nidora-gateway.service
+# Boxes provisioned before the stack became plain compose have a
+# nidora-gateway unit and a disk-check timer. Left enabled, they would run
+# their own `docker compose up` at the next boot and double-report the disk, so
+# a re-run retires them.
+for unit in nidora-gateway.service nidora-disk-check.timer nidora-disk-check.service; do
+    if [ -f "/etc/systemd/system/$unit" ]; then
+        echo "[provision] removing legacy unit $unit"
+        systemctl disable --now "$unit" >/dev/null 2>&1 || true
+        rm -f "/etc/systemd/system/$unit"
+        legacy_units=1
+    fi
+done
+if [ -n "${legacy_units:-}" ]; then
+    systemctl daemon-reload
+fi
 
 # The data volume is the only copy of in-flight job state, and a full disk on a
 # co-located box takes its neighbours down too. Warn while there is still time
-# to act rather than discovering it from failed uploads.
-cat > /usr/local/bin/nidora-disk-check <<'EOF'
+# to act rather than discovering it from failed uploads. cron rather than a
+# timer, for the same reason the stack has no unit: one mechanism is enough.
+cat > /etc/cron.hourly/nidora-disk-check <<'EOF'
 #!/usr/bin/env bash
 used=$(df --output=pcent /var/lib/docker | tail -1 | tr -dc '0-9')
 if [ "$used" -ge 80 ]; then
     logger -t nidora-disk -p user.warning "docker filesystem ${used}% used"
 fi
 EOF
-chmod +x /usr/local/bin/nidora-disk-check
-
-cat > /etc/systemd/system/nidora-disk-check.service <<'EOF'
-[Unit]
-Description=Warn when the gateway data disk is filling up
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/nidora-disk-check
-EOF
-
-cat > /etc/systemd/system/nidora-disk-check.timer <<'EOF'
-[Unit]
-Description=Hourly gateway disk check
-[Timer]
-OnCalendar=hourly
-Persistent=true
-[Install]
-WantedBy=timers.target
-EOF
-systemctl daemon-reload
-systemctl enable --now nidora-disk-check.timer
+chmod +x /etc/cron.hourly/nidora-disk-check
+rm -f /usr/local/bin/nidora-disk-check
 
 # ---------------------------------------------------------------------------
 # Start, if we have everything we need
 # ---------------------------------------------------------------------------
 if grep -q '^INFERENCE_CF_TUNNEL_TOKEN=.\+' "$INSTALL_DIR/.env"; then
-    # Interpolate the whole file against the real .env before handing it to
-    # systemd: a missing variable fails here, with the name in the log, instead
-    # of as a unit that will not start.
-    (cd "$INSTALL_DIR" && docker compose -f compose.yml config --quiet)
-    # restart, not start: a re-run installs a fresh compose.yml, and an
-    # already-active oneshot unit would otherwise ignore it.
-    systemctl restart nidora-gateway.service
+    cd "$INSTALL_DIR"
+    # Interpolate the whole file against the real .env first: a missing variable
+    # fails here, with its name in the log, rather than as a container that
+    # never appears.
+    docker compose config --quiet
+    docker compose pull --quiet
+    docker compose up -d --remove-orphans
     echo "[provision] stack started"
 else
     echo "[provision] no tunnel token yet — stack NOT started."
     echo "[provision] set INFERENCE_CF_TUNNEL_TOKEN in ${INSTALL_DIR}/.env, then:"
-    echo "[provision]   systemctl start nidora-gateway"
+    echo "[provision]   cd ${INSTALL_DIR} && docker compose up -d"
 fi
 
 echo

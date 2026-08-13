@@ -1,13 +1,15 @@
-# Gateway + its Cloudflare Tunnel. This file is the deployment: the droplet
-# provisioner installs this exact file rather than generating its own copy, so
-# tuning changed here is tuning that ships.
+# Gateway + its Cloudflare Tunnel. This file is the deployment: a host runs it
+# and its .env out of one directory (/opt/nidora on a droplet) with no service
+# manager in front — `restart: unless-stopped` and a dockerd that starts at boot
+# are what brings the stack back. The droplet provisioner installs this exact
+# file rather than generating a copy, so tuning changed here is tuning that
+# ships.
 #
 # It only ever runs a published image — CI pushes one per merge — so it works
 # unchanged on a host with no source tree, and a deploy is a pull, never a build.
 #
-# Standalone:
-#
-#   docker compose -f gateway/compose.yml up -d
+#   curl -fsSLo compose.yml <raw URL of this file>
+#   docker compose up -d
 #
 # Or as an overlay on an existing stack, so the two share a network. Pass the
 # other compose file first; its `name:` (or COMPOSE_PROJECT_NAME) decides the
@@ -15,7 +17,7 @@
 #
 #   docker compose \
 #     -f /path/to/your/docker-compose.yml \
-#     -f gateway/compose.yml \
+#     -f compose.yml \
 #     up -d inference-gateway inference-cloudflared
 #
 # Required in .env — see deploy/README.md:
