@@ -18,7 +18,7 @@ export default async function podRoutes(
   const { ctx } = opts;
   const { config, jobs, pods } = ctx;
 
-  app.addHook('preHandler', ctx.requireAdminKey);
+  app.addHook('onRequest', ctx.requireAdminKey);
 
   /**
    * These routes are typed by hand into a terminal, so the body arrives in

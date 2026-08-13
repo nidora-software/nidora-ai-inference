@@ -77,7 +77,7 @@ export default async function videoRoutes(
   const { ctx } = opts;
   const { config, jobs, pods, artifacts, waiters } = ctx;
 
-  app.addHook('preHandler', ctx.requireApiKey);
+  app.addHook('onRequest', ctx.requireApiKey);
 
   // Registered inside this plugin so the agent's raw-body parser for artifact
   // uploads is untouched.

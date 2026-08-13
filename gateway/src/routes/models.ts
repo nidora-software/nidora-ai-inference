@@ -20,7 +20,7 @@ export default async function modelRoutes(
   const { ctx } = opts;
   const { config, pods } = ctx;
 
-  app.addHook('preHandler', ctx.requireApiKey);
+  app.addHook('onRequest', ctx.requireApiKey);
 
   app.get('/v1/models', async (_request, reply) => {
     const connected = pods.listConnected(Date.now() - config.podStaleMs);

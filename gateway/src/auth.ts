@@ -9,7 +9,7 @@
  * policy, so these are the *second* gate, not the only one.
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
-import type { FastifyReply, FastifyRequest, preHandlerHookHandler } from 'fastify';
+import type { FastifyReply, FastifyRequest, onRequestHookHandler } from 'fastify';
 import { apiError } from './domain/errors.js';
 
 /**
@@ -52,7 +52,7 @@ function requestKey(request: FastifyRequest): string | null {
   return null;
 }
 
-export function makeRequireApiKey(apiKeys: readonly string[]): preHandlerHookHandler {
+export function makeRequireApiKey(apiKeys: readonly string[]): onRequestHookHandler {
   return function requireApiKey(request: FastifyRequest, reply: FastifyReply, done) {
     const key = requestKey(request);
     if (!key || !matchesAny(key, apiKeys)) {
@@ -63,7 +63,7 @@ export function makeRequireApiKey(apiKeys: readonly string[]): preHandlerHookHan
   };
 }
 
-export function makeRequireAgentSecret(secret: string): preHandlerHookHandler {
+export function makeRequireAgentSecret(secret: string): onRequestHookHandler {
   return function requireAgentSecret(request: FastifyRequest, reply: FastifyReply, done) {
     const provided = request.headers['x-agent-secret'];
     if (typeof provided !== 'string' || !safeEqual(provided, secret)) {
@@ -90,7 +90,7 @@ export function makeRequireAgentSecret(secret: string): preHandlerHookHandler {
 export function makeRequireAdminKey(
   adminKeys: readonly string[],
   apiKeys: readonly string[],
-): preHandlerHookHandler {
+): onRequestHookHandler {
   const accepted = adminKeys.length > 0 ? adminKeys : apiKeys;
   return function requireAdminKey(request: FastifyRequest, reply: FastifyReply, done) {
     const key =

@@ -55,6 +55,22 @@ describe('auth', () => {
     assert.equal(res.statusCode, 401);
   });
 
+  it('answers 401 before it parses a body, whatever the body is', async () => {
+    // Auth is an onRequest hook, not a preHandler, so it runs ahead of body
+    // parsing. Otherwise a malformed body answers 400 to a caller holding no
+    // credential at all — which reads as "the request got through" — and an
+    // unauthenticated stranger can make the gateway buffer up to
+    // BODY_LIMIT_BYTES before anyone checks who they are.
+    const cases = [
+      { url: '/v1/agent/poll', headers: { 'content-type': 'application/json' }, payload: '{oops' },
+      { url: '/v1/videos', headers: { 'content-type': 'multipart/form-data; boundary=zz' }, payload: 'garbage' },
+    ];
+    for (const { url, headers, payload } of cases) {
+      const res = await h.app.inject({ method: 'POST', url, headers, payload });
+      assert.equal(res.statusCode, 401, `${url} must reject before it parses`);
+    }
+  });
+
   it('does not accept a client API key on the agent plane, or vice versa', async () => {
     const asClient = await h.app.inject({
       method: 'POST',

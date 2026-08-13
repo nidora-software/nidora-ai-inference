@@ -74,7 +74,7 @@ export default async function agentRoutes(
   const { ctx } = opts;
   const { config, jobs, pods, artifacts, waiters } = ctx;
 
-  app.addHook('preHandler', ctx.requireAgentSecret);
+  app.addHook('onRequest', ctx.requireAgentSecret);
 
   // Artifact uploads arrive as a raw media body. This parser hands the route
   // the untouched stream so the bytes go to disk without ever being buffered

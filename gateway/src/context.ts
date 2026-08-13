@@ -3,7 +3,7 @@
  * than reached for through module state — which is what lets the tests build a
  * whole app against an in-memory database and a temp directory.
  */
-import type { preHandlerHookHandler } from 'fastify';
+import type { onRequestHookHandler } from 'fastify';
 import type { Config } from './config.js';
 import type { JobStore } from './db/jobs.js';
 import type { PodStore } from './db/pods.js';
@@ -18,7 +18,7 @@ export interface AppContext {
   waiters: Waiters;
   /** Aborted on SIGTERM so parked long-polls return instead of blocking exit. */
   shutdownSignal: AbortSignal;
-  requireApiKey: preHandlerHookHandler;
-  requireAgentSecret: preHandlerHookHandler;
-  requireAdminKey: preHandlerHookHandler;
+  requireApiKey: onRequestHookHandler;
+  requireAgentSecret: onRequestHookHandler;
+  requireAdminKey: onRequestHookHandler;
 }
