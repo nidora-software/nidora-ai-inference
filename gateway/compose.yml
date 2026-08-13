@@ -1,8 +1,13 @@
-# Gateway + its Cloudflare Tunnel.
+# Gateway + its Cloudflare Tunnel. This file is the deployment: the droplet
+# provisioner installs this exact file rather than generating its own copy, so
+# tuning changed here is tuning that ships.
+#
+# It only ever runs a published image — CI pushes one per merge — so it works
+# unchanged on a host with no source tree, and a deploy is a pull, never a build.
 #
 # Standalone:
 #
-#   docker compose -f deploy/compose.gateway.yml up -d
+#   docker compose -f gateway/compose.yml up -d
 #
 # Or as an overlay on an existing stack, so the two share a network. Pass the
 # other compose file first; its `name:` (or COMPOSE_PROJECT_NAME) decides the
@@ -10,7 +15,7 @@
 #
 #   docker compose \
 #     -f /path/to/your/docker-compose.yml \
-#     -f deploy/compose.gateway.yml \
+#     -f gateway/compose.yml \
 #     up -d inference-gateway inference-cloudflared
 #
 # Required in .env — see deploy/README.md:
@@ -19,9 +24,11 @@ name: nidora-inference
 
 services:
   inference-gateway:
-    image: ${INFERENCE_REGISTRY:-ghcr.io/nidora-software/nidora-ai-inference}/gateway:${INFERENCE_TAG:-latest}
-    build:
-      context: ../gateway
+    # Published by .github/workflows/gateway.yml to GHCR and Docker Hub, both
+    # public — no registry login. Pin the commit-SHA tag instead of `latest` if
+    # you want a redeploy to be a decision rather than a side effect of the next
+    # merge.
+    image: ${INFERENCE_IMAGE:-ghcr.io/nidora-software/nidora-ai-inference/gateway:latest}
     restart: unless-stopped
     environment:
       PORT: "8080"

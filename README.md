@@ -90,7 +90,10 @@ volume-backed HF cache (`HF_HOME=/workspace/hf`).
 
 ### Gateway
 
-See [deploy/README.md](deploy/README.md) for secrets and
+The deployed stack — gateway plus its Cloudflare Tunnel — is
+[gateway/compose.yml](gateway/compose.yml), which
+[deploy/droplet-user-data.sh](deploy/droplet-user-data.sh) installs verbatim on a
+fresh box. See [deploy/README.md](deploy/README.md) for secrets and
 [docs/gateway.md](docs/gateway.md#tuning) for the timing knobs.
 
 ## Run a pod
@@ -140,10 +143,11 @@ to a pod.
 
 ```
 gateway/                     # the queue/orchestrator service (Node + Fastify + SQLite)
+gateway/compose.yml          # the deployed stack: gateway + cloudflared
 agent/                       # the pod-side pull agent (Python), installed into the GPU image
 Dockerfile                   # GPU pod image: pinned SGLang + diffusion extra + agent
 Dockerfile.nightly           # same, on a date-pinned SGLang nightly
 scripts/docker-entrypoint.sh # supervises sglang serve + the agent
-deploy/                      # compose overlay, droplet provisioning, deployment guide
+deploy/                      # droplet provisioning script and deployment guide
 docs/                        # see the documentation table above
 ```
