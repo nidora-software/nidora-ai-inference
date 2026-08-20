@@ -40,15 +40,20 @@ export function assignmentFor(job: Job, leaseId: string): Assignment {
   const spec = getModel(job.model);
   if (!spec) throw new Error(`job ${job.id} references unknown model ${job.model}`);
 
-  const fields: Record<string, string | number> = {
-    prompt: job.params.prompt,
-    negative_prompt: job.params.negative_prompt,
-    size: job.params.size,
-    seconds: job.params.seconds,
-    num_inference_steps: job.params.num_inference_steps,
-    guidance_scale: job.params.guidance_scale,
-  };
-  if (job.params.seed !== null) fields.seed = job.params.seed;
+  let fields: Record<string, string | number>;
+  if (spec.buildFields) {
+    fields = spec.buildFields(job.params);
+  } else {
+    fields = {
+      prompt: job.params.prompt,
+      negative_prompt: job.params.negative_prompt,
+      size: job.params.size,
+      seconds: job.params.seconds,
+      num_inference_steps: job.params.num_inference_steps,
+    };
+    if (job.params.guidance_scale !== null) fields.guidance_scale = job.params.guidance_scale;
+    if (job.params.seed !== null) fields.seed = job.params.seed;
+  }
 
   return {
     job_id: job.id,

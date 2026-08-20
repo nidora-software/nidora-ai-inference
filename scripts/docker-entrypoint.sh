@@ -13,6 +13,8 @@
 #   MODEL_PATH             REQUIRED — HF repo id or local path (no default)
 #   GATEWAY_URL            REQUIRED — e.g. https://<your-hostname>
 #   GATEWAY_AGENT_SECRET   REQUIRED — matches the gateway's AGENT_SHARED_SECRET
+#   MODEL_VARIANT          optional — checkpoint partition for multi-variant
+#                          repos (MiniMax-H3: fl2va | ref2va); unset = omit flag
 #   LORA_PATH              optional — LoRA repo id/path; unset = no LoRA
 #   PORT                   default 8000
 #   SGLANG_HOST            default 127.0.0.1 — only change to debug from the host
@@ -82,6 +84,10 @@ args=(
     --host "$SGLANG_HOST"
     --port "$PORT"
 )
+
+if [ -n "${MODEL_VARIANT:-}" ]; then
+    args+=(--model-variant "$MODEL_VARIANT")
+fi
 
 if [ -n "${LORA_PATH:-}" ]; then
     args+=(--lora-path "$LORA_PATH")

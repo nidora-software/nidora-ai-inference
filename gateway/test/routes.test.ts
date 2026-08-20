@@ -196,7 +196,7 @@ describe('input validation', () => {
     // A client-chosen model reaching a model or LoRA path would be RCE.
     const res = await submit(h, { model: '../../etc/passwd' });
     assert.equal(res.statusCode, 404);
-    assert.deepEqual(res.json().available, [MODEL]);
+    assert.ok((res.json().available as string[]).includes(MODEL));
   });
 
   it('requires a prompt', async () => {

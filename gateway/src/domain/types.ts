@@ -35,7 +35,8 @@ export interface JobParams {
   size: string;
   seconds: number;
   num_inference_steps: number;
-  guidance_scale: number;
+  /** null for pipelines with no guidance knob (e.g. MiniMax-H3). */
+  guidance_scale: number | null;
   seed: number | null;
 }
 

@@ -154,13 +154,17 @@ export default async function agentRoutes(
     const slots = freeSlots(pod, stillOwned.size);
     let assign = claimForPod(jobs, pod, slots, config.leaseTtlMs, now);
 
-    // Nothing to do — park until work shows up or the poll window closes.
-    if (assign.length === 0 && slots > 0 && !pod.draining) {
+    // Nothing to hand out — park until work shows up or the poll window
+    // closes. Pods with no free slots (still warming, or saturated) park too:
+    // their poll is a heartbeat, and answering it instantly would turn the
+    // agent's zero-delay loop into a busy-wait for the whole model load.
+    // Readiness gates *claiming*, never *parking*.
+    if (assign.length === 0) {
       const requested =
         typeof body.wait_s === 'number' ? body.wait_s * 1000 : config.maxPollWaitMs;
       const waitMs = Math.min(Math.max(requested, 0), config.maxPollWaitMs);
       const woken = await waiters.wait(waitMs, ctx.shutdownSignal);
-      if (woken) {
+      if (woken && slots > 0 && !pod.draining) {
         assign = claimForPod(jobs, pod, slots, config.leaseTtlMs, Date.now());
       }
     }

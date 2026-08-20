@@ -1,0 +1,121 @@
+# The whole fleet on one machine — for local development on a consumer GPU.
+#
+# A pod is only ever a member of a gateway fleet (there is no standalone mode),
+# so "serve SGLang locally" means running the *stack* locally: the gateway on
+# loopback and one GPU pod beside it, wired over the compose network. No
+# tunnel, no DNS, no Cloudflare — the gateway is published on 127.0.0.1 only.
+#
+#   docker compose -f compose.local.yml up --build
+#
+#   curl http://127.0.0.1:8080/v1/models -H "X-Api-Key: local-dev-key"
+#
+# Defaults target MiniMax-H3 (fl2va) on a single 24 GB card (RTX 4090) using
+# the cookbook's consumer-GPU recipe: int8 weights + full DiT/text-encoder
+# layerwise offload to host RAM. See docs/local-dev.md — including the
+# Windows/WSL2 RAM note; the offloaded weights live in *host* memory.
+#
+# Everything is overridable from .env: LOCAL_MODEL_PATH, LOCAL_MODEL_VARIANT,
+# LOCAL_SGLANG_ARGS, LOCAL_API_KEY, LOCAL_AGENT_SECRET, HF_TOKEN.
+name: nidora-inference-local
+
+services:
+  inference-gateway:
+    build: ./gateway
+    # The image only ever exists as a local build — without this, compose
+    # first tries to pull it from Docker Hub and spams "pull access denied"
+    # before falling back to the build.
+    image: nidora-inference-gateway:local
+    pull_policy: build
+    restart: unless-stopped
+    ports:
+      # Loopback only: local clients talk to the gateway exactly as production
+      # clients do, but nothing on the LAN can reach it.
+      - "127.0.0.1:8080:8080"
+    environment:
+      PORT: "8080"
+      DATA_DIR: /data
+      LOG_LEVEL: ${LOCAL_LOG_LEVEL:-info}
+
+      # Dev credentials with safe defaults — the stack boots with zero .env.
+      GATEWAY_API_KEYS: ${LOCAL_API_KEY:-local-dev-key}
+      AGENT_SHARED_SECRET: ${LOCAL_AGENT_SECRET:-local-dev-agent-secret}
+
+      LEASE_TTL_S: "120"
+      MAX_POLL_WAIT_S: "25"
+      # A fully offloaded 24 GB pod is slow: give a job an hour before the
+      # gateway declares it dead, instead of production's 18 minutes.
+      JOB_TTL_S: "3600"
+      MAX_ATTEMPTS: "2"
+
+      ARTIFACT_TTL_HOURS: "24"
+      JOB_RETENTION_DAYS: "7"
+      MAX_INPUT_BYTES: "20971520"
+      MAX_ARTIFACT_BYTES: "209715200"
+      BODY_LIMIT_BYTES: "33554432"
+      MAX_QUEUE_DEPTH: "20"
+    volumes:
+      - gateway-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  inference-pod:
+    # Defaults to the published experimental image (SGLang nightly — the
+    # MiniMax-H3 pipeline is not in a release yet). `--build` rebuilds it from
+    # Dockerfile.nightly instead, e.g. after editing the agent.
+    image: ${LOCAL_POD_IMAGE:-erenck/nidora-ai-inference:experimental}
+    build:
+      context: .
+      dockerfile: Dockerfile.nightly
+    restart: unless-stopped
+    gpus: all
+    # The cookbook runs MiniMax-H3 with the host IPC namespace; the offload
+    # path moves whole layers through shared memory every step.
+    ipc: host
+    depends_on:
+      inference-gateway:
+        condition: service_healthy
+    environment:
+      MODEL_PATH: ${LOCAL_MODEL_PATH:-MiniMaxAI/MiniMax-H3}
+      MODEL_VARIANT: ${LOCAL_MODEL_VARIANT:-fl2va}
+      # The cookbook's 1×RTX 4090 24 GB recipe: int8 weights (comfy-kitchen),
+      # exact flash attention, and every DiT/text-encoder layer offloaded to
+      # host RAM with a prefetch depth of 1. Torch compile stays off for
+      # numerical consistency (and it recompiles per resolution anyway).
+      #
+      # NOT sage_attn: MiniMax-H3's pipeline refuses it at startup ("does not
+      # support SageAttention: the current packed varlen path does not
+      # preserve model output"). The kernels are in the image for models that
+      # do support it — pass it via LOCAL_SGLANG_ARGS for those.
+      SGLANG_EXTRA_ARGS: ${LOCAL_SGLANG_ARGS:- --quantization kitchen_int8 --attention-backend fa --performance-mode memory --layerwise-offload-components dit,text_encoder --dit-offload-prefetch-size 1 --dit-layerwise-resident-layers 0 --enable-torch-compile false}
+
+      GATEWAY_URL: http://inference-gateway:8080
+      GATEWAY_AGENT_SECRET: ${LOCAL_AGENT_SECRET:-local-dev-agent-secret}
+      POD_ID: local-gpu
+      # Must sit inside the gateway's JOB_TTL_S so the pod, not the reaper,
+      # reports the timeout.
+      AGENT_JOB_TIMEOUT_S: "3300"
+
+      # Only needed for gated repos. Weights land once in the volume below.
+      HF_TOKEN: ${HF_TOKEN:-}
+
+      # To poke SGLang directly from the host (it has NO auth — keep the port
+      # mapping loopback-only), uncomment this and the ports block:
+      #SGLANG_HOST: 0.0.0.0
+    #ports:
+    #  - "127.0.0.1:8000:8000"
+    volumes:
+      # HF cache + SGLang's diffusion cache (HF_HOME=/workspace/hf in the
+      # image). The ~40 GB MiniMax-H3 download happens exactly once.
+      - pod-workspace:/workspace
+
+volumes:
+  gateway-data:
+  pod-workspace:

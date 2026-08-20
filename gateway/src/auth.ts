@@ -8,17 +8,21 @@
  * Cloudflare Access sits in front of the whole hostname with a service-token
  * policy, so these are the *second* gate, not the only one.
  */
-import { createHash, timingSafeEqual } from 'node:crypto';
-import type { FastifyReply, FastifyRequest, onRequestHookHandler } from 'fastify';
-import { apiError } from './domain/errors.js';
+import { createHash, timingSafeEqual } from "node:crypto";
+import type {
+  FastifyReply,
+  FastifyRequest,
+  onRequestHookHandler,
+} from "fastify";
+import { apiError } from "./domain/errors.js";
 
 /**
  * The single rejection every client-facing route gives. Shared rather than
  * repeated so a future route cannot reintroduce a message that describes which
  * credential was missing.
  */
-const UNAUTHORIZED = apiError(401, 'invalid or missing API key', {
-  code: 'invalid_api_key',
+const UNAUTHORIZED = apiError(401, "invalid or missing API key", {
+  code: "invalid_api_key",
 });
 
 /**
@@ -27,13 +31,16 @@ const UNAUTHORIZED = apiError(401, 'invalid or missing API key', {
  * (and whose length mismatch would itself leak a bit of information).
  */
 export function safeEqual(a: string, b: string): boolean {
-  const ha = createHash('sha256').update(a, 'utf8').digest();
-  const hb = createHash('sha256').update(b, 'utf8').digest();
+  const ha = createHash("sha256").update(a, "utf8").digest();
+  const hb = createHash("sha256").update(b, "utf8").digest();
   return timingSafeEqual(ha, hb);
 }
 
 /** True when `candidate` matches any accepted secret. Never short-circuits. */
-export function matchesAny(candidate: string, accepted: readonly string[]): boolean {
+export function matchesAny(
+  candidate: string,
+  accepted: readonly string[],
+): boolean {
   let hit = false;
   for (const secret of accepted) {
     if (safeEqual(candidate, secret)) hit = true;
@@ -43,17 +50,23 @@ export function matchesAny(candidate: string, accepted: readonly string[]): bool
 
 /** `X-Api-Key: <key>` or `Authorization: Bearer <key>`, matching the legacy stack. */
 function requestKey(request: FastifyRequest): string | null {
-  const header = request.headers['x-api-key'];
-  if (typeof header === 'string' && header) return header;
+  const header = request.headers["x-api-key"];
+  if (typeof header === "string" && header) return header;
   const auth = request.headers.authorization;
-  if (typeof auth === 'string' && auth.toLowerCase().startsWith('bearer ')) {
+  if (typeof auth === "string" && auth.toLowerCase().startsWith("bearer ")) {
     return auth.slice(7).trim() || null;
   }
   return null;
 }
 
-export function makeRequireApiKey(apiKeys: readonly string[]): onRequestHookHandler {
-  return function requireApiKey(request: FastifyRequest, reply: FastifyReply, done) {
+export function makeRequireApiKey(
+  apiKeys: readonly string[],
+): onRequestHookHandler {
+  return function requireApiKey(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    done,
+  ) {
     const key = requestKey(request);
     if (!key || !matchesAny(key, apiKeys)) {
       reply.code(401).send(UNAUTHORIZED);
@@ -64,12 +77,18 @@ export function makeRequireApiKey(apiKeys: readonly string[]): onRequestHookHand
 }
 
 export function makeRequireAgentSecret(secret: string): onRequestHookHandler {
-  return function requireAgentSecret(request: FastifyRequest, reply: FastifyReply, done) {
-    const provided = request.headers['x-agent-secret'];
-    if (typeof provided !== 'string' || !safeEqual(provided, secret)) {
-      reply.code(401).send(apiError(401, 'invalid or missing agent secret', {
-        code: 'invalid_agent_secret',
-      }));
+  return function requireAgentSecret(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    done,
+  ) {
+    const provided = request.headers["x-agent-secret"];
+    if (typeof provided !== "string" || !safeEqual(provided, secret)) {
+      reply.code(401).send(
+        apiError(401, "invalid or missing agent secret", {
+          code: "invalid_agent_secret",
+        }),
+      );
       return;
     }
     done();
@@ -92,10 +111,14 @@ export function makeRequireAdminKey(
   apiKeys: readonly string[],
 ): onRequestHookHandler {
   const accepted = adminKeys.length > 0 ? adminKeys : apiKeys;
-  return function requireAdminKey(request: FastifyRequest, reply: FastifyReply, done) {
+  return function requireAdminKey(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    done,
+  ) {
     const key =
-      typeof request.headers['x-admin-key'] === 'string'
-        ? (request.headers['x-admin-key'] as string)
+      typeof request.headers["x-admin-key"] === "string"
+        ? (request.headers["x-admin-key"] as string)
         : requestKey(request);
     if (!key || !matchesAny(key, accepted)) {
       reply.code(401).send(UNAUTHORIZED);

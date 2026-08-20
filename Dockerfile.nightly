@@ -2,15 +2,25 @@
 # pipelines exist on sglang main but not yet in a release (e.g.
 # MiniMaxAI/MiniMax-H3). Published as the `:experimental` tag; the stable
 # image (Dockerfile) remains the production path.
-ARG SGLANG_BASE=lmsysorg/sglang:nightly-dev-cu12-20260803-12eadf86
+# 2026-08-03 predates `--quantization kitchen_int8` (the MiniMax-H3
+# consumer-GPU recipe); 2026-08-18 is the first pin verified to carry it.
+ARG SGLANG_BASE=lmsysorg/sglang:nightly-dev-cu12-20260818-c0b6474b
 FROM ${SGLANG_BASE}
 
 # Nightly images carry the sglang source checkout; install the diffusion
 # extra against that same tree so engine and deps stay in sync.
 RUN pip install --no-cache-dir -e "/sgl-workspace/sglang/python[diffusion]"
 
+# Consumer-GPU kernels, harmless when unused: comfy-kitchen backs
+# `--quantization kitchen_int8` (the MiniMax-H3 24 GB recipe), sageattention
+# backs `--attention-backend sage_attn` (8-bit attention, Triton-based).
+RUN pip install --no-cache-dir comfy-kitchen sageattention
+
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+# The CR strip keeps a Windows checkout (CRLF autocrlf) from producing an
+# image whose shebang is `bash\r` — CI checkouts are LF and unaffected.
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
+    && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # The pull agent — see the stable Dockerfile.
 COPY agent /opt/nidora-agent

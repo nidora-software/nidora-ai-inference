@@ -13,6 +13,7 @@
  * capability is simply the model it loaded.
  */
 import type { Resolution } from './sizing.js';
+import type { JobParams } from './types.js';
 
 export interface ModelSpec {
   /** Which SGLang endpoint fulfils this model's task. */
@@ -23,14 +24,29 @@ export interface ModelSpec {
   defaults: {
     seconds: number;
     num_inference_steps: number;
-    guidance_scale: number;
+    /** null = the pipeline has no guidance knob; the field is never sent. */
+    guidance_scale: number | null;
   };
   limits: {
+    /** Pipelines with a duration floor (H3: 4s) reject anything shorter. */
+    minSeconds?: number;
     maxSeconds: number;
     maxSteps: number;
   };
   negativePrompt: string;
   maxPromptChars: number;
+  /**
+   * False for CFG-distilled pipelines (MiniMax-H3) that reject the field's
+   * mere presence — it is then never sent, and a client supplying one gets a
+   * 400 rather than a silent drop. Absent means true.
+   */
+  acceptsNegativePrompt?: boolean;
+  /**
+   * Builds the SGLang form fields for this model when its request dialect
+   * differs from the flat OpenAI shape the default builder emits. Fields are
+   * still fully gateway-owned: the builder only sees validated JobParams.
+   */
+  buildFields?: (params: JobParams) => Record<string, string | number>;
 }
 
 /**
@@ -52,6 +68,55 @@ export const MODELS: Record<string, ModelSpec> = {
     limits: { maxSeconds: 10, maxSteps: 12 },
     negativePrompt: WAN22_NEGATIVE_PROMPT,
     maxPromptChars: 2000,
+  },
+
+  /**
+   * MiniMax-H3 in its `fl2va` variant (first/last-frame → video+audio). The
+   * uploaded input_reference is the first keyframe, so it rides the same
+   * image-conditioned pipeline as Wan. Flow-matching pipeline: there is no
+   * guidance knob, hence `guidance_scale: null`. Steps default to the
+   * pipeline's own 50; the prompt budget is generous because H3 prompts are
+   * long structured multimodal descriptions.
+   */
+  'MiniMaxAI/MiniMax-H3': {
+    endpoint: '/v1/videos',
+    task: 'fl2va',
+    resolutions: ['480p', '720p'],
+    defaults: { seconds: 5, num_inference_steps: 50, guidance_scale: null },
+    // H3 enforces duration_seconds in [4, 15].
+    limits: { minSeconds: 4, maxSeconds: 15, maxSteps: 60 },
+    negativePrompt: '',
+    maxPromptChars: 6000,
+    acceptsNegativePrompt: false,
+    // H3 speaks its own dialect: a mandatory `task`, a structured `target`
+    // (JSON string — SGLang json-parses string extras) instead of size/
+    // seconds, and rejection of every CFG field on mere presence. The task is
+    // always fl2va because the gateway requires an input image — the first
+    // keyframe. aspect_ratio auto lets H3 derive the canvas from it.
+    buildFields: (params) => {
+      const fields: Record<string, string | number> = {
+        task: 'fl2va',
+        prompt: params.prompt,
+        // fl2va demands an explicit conditions entry; the multipart upload is
+        // not auto-mapped. The agent substitutes the placeholder with a
+        // data: URI of the (checksummed) input image it fetched — base64 is
+        // JSON-safe, so plain string substitution cannot corrupt the JSON.
+        conditions: JSON.stringify([
+          { type: 'image', uri: '{{INPUT_DATA_URI}}', role: 'keyframe', frame_index: 0 },
+        ]),
+        // H3 accepts exactly one canvas: short_edge 768 ("must be 768 for
+        // minimax_h3"). The client's size choice only shapes the keyframe;
+        // aspect_ratio auto derives the long edge from it.
+        target: JSON.stringify({
+          short_edge: 768,
+          aspect_ratio: 'auto',
+          duration_seconds: params.seconds,
+        }),
+        num_inference_steps: params.num_inference_steps,
+      };
+      if (params.seed !== null) fields.seed = params.seed;
+      return fields;
+    },
   },
 };
 

@@ -47,8 +47,18 @@ class Agent:
             backoff = self.config.poll_error_backoff_s
             while not self._stop.is_set():
                 try:
-                    await self._cycle(client)
+                    started = asyncio.get_running_loop().time()
+                    assigned = await self._cycle(client)
                     backoff = self.config.poll_error_backoff_s
+                    # The gateway is supposed to park an empty poll for up to
+                    # wait_s. If it answered instantly with nothing to do —
+                    # older gateway, misconfigured window — looping straight
+                    # back would busy-wait through the whole model load. The
+                    # floor only engages on idle cycles, so dispatch latency
+                    # for real work is untouched.
+                    elapsed = asyncio.get_running_loop().time() - started
+                    if assigned == 0 and elapsed < 1.0:
+                        await self._sleep(1.0 - elapsed)
                 except httpx.HTTPError as exc:
                     # The gateway, the tunnel, or the network. Keep working on
                     # whatever is already running — sglang neither knows nor
@@ -71,7 +81,7 @@ class Agent:
         except asyncio.TimeoutError:
             pass
 
-    async def _cycle(self, client: httpx.AsyncClient) -> None:
+    async def _cycle(self, client: httpx.AsyncClient) -> int:
         # Readiness is checked every cycle, not once: a pod can go from loading
         # to ready ten minutes in, and can lose its server to an OOM at any
         # point after that.
@@ -130,8 +140,10 @@ class Agent:
         if payload.get("drain"):
             log.info("gateway asked this pod to drain; no new work will be accepted")
 
-        for raw in payload.get("assign") or []:
+        assign = payload.get("assign") or []
+        for raw in assign:
             self._start(client, Assignment.from_payload(raw))
+        return len(assign)
 
     def _start(self, client: httpx.AsyncClient, assignment: Assignment) -> None:
         if assignment.job_id in self.jobs:

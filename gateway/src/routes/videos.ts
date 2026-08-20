@@ -255,6 +255,14 @@ export default async function videoRoutes(
     }
 
     const negative = (fields.negative_prompt ?? '').trim() || spec.negativePrompt;
+    if (negative && spec.acceptsNegativePrompt === false) {
+      return reply.code(400).send(
+        apiError(400, `${model} is CFG-distilled and does not accept a negative_prompt`, {
+          code: 'unsupported_parameter',
+          param: 'negative_prompt',
+        }),
+      );
+    }
 
     // Step count, duration and guidance are gateway-owned and clamped: a
     // client-chosen step count is a queue-starvation lever, not a feature.
@@ -264,7 +272,11 @@ export default async function videoRoutes(
       negative_prompt: negative,
       resolution,
       size,
-      seconds: clamp(num(fields.seconds) ?? spec.defaults.seconds, 1, spec.limits.maxSeconds),
+      seconds: clamp(
+        num(fields.seconds) ?? spec.defaults.seconds,
+        spec.limits.minSeconds ?? 1,
+        spec.limits.maxSeconds,
+      ),
       num_inference_steps: clamp(
         Math.round(num(fields.num_inference_steps) ?? spec.defaults.num_inference_steps),
         1,
@@ -337,6 +349,9 @@ export default async function videoRoutes(
       // forces it: there is deliberately no `cancelling` status, because a
       // client is entitled to map exactly the five documented ones.
       jobs.requestCancel(job.id, now);
+      // The owning pod is parked in its long-poll (busy pods park like idle
+      // ones); wake it so the cancel is delivered now, not at window close.
+      waiters.kick();
       return reply.code(202).send(respond(jobs.get(job.id)!));
     }
 

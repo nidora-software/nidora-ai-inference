@@ -7,7 +7,10 @@ FROM lmsysorg/sglang:v0.5.16-cu129
 RUN pip install --no-cache-dir "sglang[diffusion]==0.5.16"
 
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+# The CR strip keeps a Windows checkout (CRLF autocrlf) from producing an
+# image whose shebang is `bash\r` — CI checkouts are LF and unaffected.
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
+    && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # The pull agent. Installed last so editing it never busts the expensive
 # sglang[diffusion] layer above. Its only dependency is httpx, which the base

@@ -41,6 +41,7 @@ back. Adding or destroying a pod is an env-var change, not a DNS change.
 | [docs/api.md](docs/api.md) | The client API — submit a job, poll, download |
 | [docs/agent-protocol.md](docs/agent-protocol.md) | The pod↔gateway protocol |
 | [docs/deploy-pods.md](docs/deploy-pods.md) | Running pods on Vast.ai / RunPod |
+| [docs/local-dev.md](docs/local-dev.md) | The whole stack in Docker on one workstation GPU |
 | [deploy/README.md](deploy/README.md) | Deploying the gateway and its tunnel |
 
 ## The client API
@@ -74,6 +75,7 @@ Everything is env-driven — no code changes to switch models or tune:
 | `MODEL_PATH` | **yes** | HF repo id or local path of the served model |
 | `GATEWAY_URL` | **yes** | The gateway to pull work from, e.g. `https://<your-hostname>` |
 | `GATEWAY_AGENT_SECRET` | **yes** | Shared secret for the agent control plane |
+| `MODEL_VARIANT` | no | Checkpoint partition for multi-variant repos (MiniMax-H3: `fl2va` \| `ref2va`) |
 | `LORA_PATH` | no | LoRA repo id/path; unset = no LoRA |
 | `PORT` | no | SGLang HTTP port (default 8000) |
 | `SGLANG_HOST` | no | Bind address (default `127.0.0.1`) |
@@ -95,6 +97,16 @@ The deployed stack — gateway plus its Cloudflare Tunnel — is
 [deploy/droplet-user-data.sh](deploy/droplet-user-data.sh) installs verbatim on a
 fresh box. See [deploy/README.md](deploy/README.md) for secrets and
 [docs/gateway.md](docs/gateway.md#tuning) for the timing knobs.
+
+## Run locally (one workstation GPU)
+
+```bash
+docker compose -f compose.local.yml up
+```
+
+Runs the gateway on `127.0.0.1:8080` and one pod on the local GPU —
+preconfigured for MiniMax-H3 on a 24 GB card via SGLang's int8 + layerwise
+offload recipe. See [docs/local-dev.md](docs/local-dev.md).
 
 ## Run a pod
 
@@ -144,6 +156,7 @@ to a pod.
 ```
 gateway/                     # the queue/orchestrator service (Node + Fastify + SQLite)
 gateway/compose.yml          # the deployed stack: gateway + cloudflared
+compose.local.yml            # local dev: gateway + one pod on the workstation GPU
 agent/                       # the pod-side pull agent (Python), installed into the GPU image
 Dockerfile                   # GPU pod image: pinned SGLang + diffusion extra + agent
 Dockerfile.nightly           # same, on a date-pinned SGLang nightly
